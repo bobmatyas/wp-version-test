@@ -1,0 +1,12 @@
+{
+  "owner": "bobmatyas",
+  "phpVersion": "8.4",
+  "plugins": [
+    {
+      "slug": "wp-job-manager",
+      "repo": "wp-job-manager",
+      "ignoreCodes": [],
+      "adminPaths": []
+    }
+  ]
+}
