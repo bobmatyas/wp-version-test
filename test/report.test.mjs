@@ -64,9 +64,100 @@ test('separates run errors from findings', () => {
   assert.match(md, /repository not found/);
 });
 
+test('suppresses findings when a plugin has a run error, even if upstream data is stale', () => {
+  const reportWithStaleData = {
+    ...report,
+    plugins: [
+      {
+        slug: 'stale-plugin', repo: 'stale-plugin', sha: null, branch: null,
+        runError: 'git clone failed: timeout',
+        blocking: [{ slug: 'stale-plugin', severity: 'blocking', kind: 'fatal', attribution: 'direct', message: 'Should not appear', file: '/repos/stale-plugin/a.php', line: 42, raw: '' }],
+        advisory: [{ slug: 'stale-plugin', severity: 'advisory', kind: 'deprecated', attribution: 'direct', message: 'Also should not appear', file: '/repos/stale-plugin/b.php', line: 20, raw: '' }],
+        smoke: [{ url: 'http://x/', status: 500, ok: false, reason: 'HTTP 500' }],
+        pluginCheck: { available: true, newErrors: [{ code: 'ERR.Found', findingType: 'ERROR', severity: 9, filePath: 'a.php', line: 10, message: 'Stale error', docs: null }] },
+        bumpEligible: false,
+      },
+    ],
+  };
+  const md = renderMarkdown(reportWithStaleData);
+  const stalePluginSection = md.split('## stale-plugin')[1].split('## ')[0];
+  assert.match(stalePluginSection, /Run error — this plugin was not tested/);
+  assert.doesNotMatch(stalePluginSection, /Should not appear/);
+  assert.doesNotMatch(stalePluginSection, /Also should not appear/);
+  assert.doesNotMatch(stalePluginSection, /HTTP 500/);
+  assert.doesNotMatch(stalePluginSection, /Stale error/);
+});
+
 test('labels indirect attribution so a core path is not mistaken for the source', () => {
   const md = renderMarkdown(report);
   assert.match(md, /indirect/i);
+});
+
+test('distinguishes direct from indirect attribution in the same report', () => {
+  const md = renderMarkdown(report);
+  // Extract plugin sections by finding the heading and content until the next h2 (## followed by newline)
+  const goodPluginMatch = md.match(/## good-plugin\n([\s\S]*?)(?=\n## |$)/);
+  const badPluginMatch = md.match(/## bad-plugin\n([\s\S]*?)(?=\n## |$)/);
+  const goodPluginSection = goodPluginMatch ? goodPluginMatch[1] : '';
+  const badPluginSection = badPluginMatch ? badPluginMatch[1] : '';
+
+  // Direct attribution should NOT have the indirect label
+  assert.match(badPluginSection, /fatal.*Uncaught Error: boom/);
+  assert.doesNotMatch(badPluginSection, /Uncaught Error: boom.*indirect/i);
+  // Indirect attribution SHOULD have the label
+  assert.match(goodPluginSection, /deprecated.*indirect/i);
+});
+
+test('handles plugin check findings with null filePath and line 0', () => {
+  const reportWithNullPath = {
+    ...report,
+    plugins: [
+      {
+        slug: 'null-path-plugin', repo: 'null-path-plugin', sha: 'abc1234', branch: null, runError: null,
+        blocking: [],
+        advisory: [],
+        smoke: [],
+        pluginCheck: {
+          available: true,
+          newErrors: [
+            { code: 'Generic.Error', findingType: 'ERROR', severity: 9, filePath: null, line: 0, message: 'Generic error with no file', docs: null },
+            { code: 'Generic.WithPath', findingType: 'ERROR', severity: 9, filePath: 'specific.php', line: 5, message: 'Error with file', docs: null },
+          ],
+        },
+        bumpEligible: true,
+      },
+    ],
+  };
+  const md = renderMarkdown(reportWithNullPath);
+  assert.doesNotMatch(md, /null:/);
+  assert.match(md, /Generic error with no file/);
+  assert.match(md, /specific\.php:5/);
+});
+
+test('escapes markdown special characters in messages and file paths', () => {
+  const reportWithSpecialChars = {
+    ...report,
+    plugins: [
+      {
+        slug: 'backtick|pipe', repo: 'backtick|pipe', sha: 'abc1234', branch: null, runError: null,
+        blocking: [
+          { slug: 'backtick|pipe', severity: 'blocking', kind: 'error', attribution: 'direct', message: 'Error with `backtick` and |pipe|', file: '/repos/backtick|pipe/test.php', line: 10, raw: '' },
+        ],
+        advisory: [],
+        smoke: [],
+        pluginCheck: { available: true, newErrors: [] },
+        bumpEligible: false,
+      },
+    ],
+  };
+  const md = renderMarkdown(reportWithSpecialChars);
+  // Verify backticks and pipes are escaped (shown as \` and \|)
+  assert.match(md, /Error with \\`backtick\\` and \\|pipe\\|/);
+  assert.match(md, /test\.php:10/);
+  // Verify the file path still appears in a code span (with backticks)
+  assert.match(md, /`[^`]*test\.php:10[^`]*`/);
+  // Verify that the slug appears in the table with backticks (code formatting)
+  assert.match(md, /\| `backtick\\|pipe` \|/);
 });
 
 test('includes plugin check findings in their own section', () => {
