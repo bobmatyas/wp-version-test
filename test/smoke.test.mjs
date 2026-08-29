@@ -9,9 +9,14 @@ const okResponse = (body = '<html>fine</html>') => ({
 });
 
 test('detects PHP fatal signatures in a response body', () => {
+  // PHP HTML-wrapped errors (when html_errors=on)
   assert.equal(hasFatalSignature('<b>Fatal error</b>: Uncaught Error'), true);
+  assert.equal(hasFatalSignature('<b>Parse error</b>: syntax error'), true);
+  // WordPress critical error page
   assert.equal(hasFatalSignature('There has been a critical error on this website'), true);
-  assert.equal(hasFatalSignature('Parse error: syntax error'), true);
+  // Should not match bare phrases (false positives)
+  assert.equal(hasFatalSignature('Fatal error: Uncaught Exception'), false);
+  assert.equal(hasFatalSignature('Parse error: unexpected delimiter'), false);
   assert.equal(hasFatalSignature('<html>all good</html>'), false);
 });
 
@@ -48,7 +53,7 @@ test('fails a non-200 response', async () => {
 
 test('fails a 200 response containing a fatal error', async () => {
   const r = await checkUrl('http://x/', {
-    fetchImpl: async () => okResponse('Fatal error: Uncaught Error: boom'),
+    fetchImpl: async () => okResponse('<b>Fatal error</b>: Uncaught Error: boom'),
   });
   assert.equal(r.ok, false);
   assert.match(r.reason, /fatal/i);
@@ -69,4 +74,66 @@ test('runSmoke checks every url', async () => {
   });
   assert.equal(results.length, 2);
   assert.ok(results.every((r) => r.ok));
+});
+
+test('passes a bare phrase "Fatal error" without HTML wrapper', async () => {
+  const r = await checkUrl('http://x/', {
+    fetchImpl: async () => okResponse('Plugin log viewer shows: Fatal error: Uncaught Exception'),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, null);
+});
+
+test('fails on WordPress critical error page', async () => {
+  const r = await checkUrl('http://x/', {
+    fetchImpl: async () => okResponse('<html><body>There has been a critical error on this website</body></html>'),
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /fatal/i);
+});
+
+test('fails on redirect to wp-login.php (authentication failure)', async () => {
+  const r = await checkUrl('http://x/wp-admin/index.php', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/wp-login.php?redirect_to=...',
+      text: async () => '<form>login</form>',
+    }),
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Redirected to login/);
+  assert.match(r.reason, /wp-login.php/);
+});
+
+test('passes a benign redirect (e.g., trailing slash)', async () => {
+  const r = await checkUrl('http://x/wp-admin/options-general.php', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/wp-admin/options-general.php/',
+      text: async () => '<html>settings page</html>',
+    }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, null);
+});
+
+test('fails on timeout with no pending timer', async () => {
+  const r = await checkUrl('http://x/', {
+    timeoutMs: 50,
+    fetchImpl: async (url, opts) => {
+      // Simulate a timeout by aborting the signal
+      return new Promise((_, reject) => {
+        opts.signal.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      });
+    },
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Timed out/);
+  // The test suite will detect any pending timers after this test runs
 });

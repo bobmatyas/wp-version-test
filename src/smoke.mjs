@@ -1,11 +1,13 @@
-const FATAL_SIGNATURES = [
-  'Fatal error',
-  'Parse error',
-  'There has been a critical error on this website',
-];
-
 export function hasFatalSignature(body) {
-  return FATAL_SIGNATURES.some((sig) => body.includes(sig));
+  // Match PHP error wrapper: <b>Fatal error</b> or <b>Parse error</b>
+  if (/<b>\s*(Fatal error|Parse error)\s*<\/b>/i.test(body)) {
+    return true;
+  }
+  // Match WordPress critical error page
+  if (body.includes('There has been a critical error on this website')) {
+    return true;
+  }
+  return false;
 }
 
 export function menuSlugToPath(slug) {
@@ -37,6 +39,12 @@ export async function checkUrl(url, { fetchImpl = fetch, timeoutMs = 10000 } = {
 
   try {
     const res = await fetchImpl(url, { signal: controller.signal, redirect: 'follow' });
+
+    // Detect redirect to login page: auth token failed
+    if (res.redirected && res.url && res.url.includes('wp-login.php')) {
+      return { url, status: res.status, ok: false, reason: `Redirected to login (${res.url}) — the harness token did not authenticate` };
+    }
+
     const body = await res.text();
 
     if (!res.ok) {
