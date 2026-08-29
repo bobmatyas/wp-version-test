@@ -152,7 +152,7 @@ test('escapes markdown special characters in messages and file paths', () => {
   };
   const md = renderMarkdown(reportWithSpecialChars);
   // Verify backticks and pipes are escaped (shown as \` and \|)
-  assert.match(md, /Error with \\`backtick\\` and \\|pipe\\|/);
+  assert.match(md, /Error with \\`backtick\\` and \\\|pipe\\\|/);
   assert.match(md, /test\.php:10/);
   // Verify the file path still appears in a code span (with backticks)
   assert.match(md, /`[^`]*test\.php:10[^`]*`/);

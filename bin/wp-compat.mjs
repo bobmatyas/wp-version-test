@@ -95,7 +95,9 @@ async function main() {
       throw new Error(
         `Could not clean up the previous site at ${SITE}: ${e.message}\n` +
         'Refusing to continue — removing this directory now would orphan a site ' +
-        'that is still registered in the Studio app. Delete it there, then re-run.',
+        'that is still registered in the Studio app. If it still appears there, delete ' +
+        `it in the Studio app. Otherwise (it may already be deregistered) just remove ` +
+        `the leftover directory directly: rm -rf ${SITE}. Then re-run.`,
       );
     }
   }
