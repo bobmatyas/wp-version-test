@@ -13,11 +13,12 @@ against WordPress <version>."
 
 ## The rule that matters
 
-**Never create a GitHub issue or pull request without explicit confirmation for
-that specific write.** The CLI never calls `gh` — it has no knowledge of GitHub
-at all. Every write happens here, in this skill, one approval at a time.
-Approval for one issue is not approval for the next, and approval for an issue
-is not approval for a PR on the same plugin. Propose, wait, write, repeat.
+**Never create or update a GitHub issue, and never open a pull request,
+without explicit confirmation for that specific write.** The CLI never calls
+`gh` — it has no knowledge of GitHub at all. Every write happens here, in this
+skill, one approval at a time. Approval for one issue is not approval for the
+next, and approval for an issue is not approval for a PR on the same plugin.
+Propose, wait, write, repeat.
 
 ## Step 1: Run the CLI
 
@@ -137,15 +138,24 @@ the bump as skipped, quoting the `reason` it gave. Silently corrupting a
 plugin repo — or guessing at a pattern the transform declined to touch — is
 the worst outcome this tool can produce.
 
-Then, only for edits that actually changed something:
+Then, only for edits that actually changed something, and only after the user
+has approved this specific PR — the branch push below is itself an
+outward-facing write to the user's real repository, not a local step, so it
+must not happen before that approval:
 
 ```bash
 cd .work/repos/<slug>
 git checkout -b wp-compat/tested-up-to-<version>
 git add -A
 git commit -m "chore: test against WordPress <version>"
+git push -u origin wp-compat/tested-up-to-<version>
 gh pr create --repo <owner>/<repo> --title "..." --body-file <path>
 ```
+
+Don't skip the push and go straight to `gh pr create` — without an upstream
+branch already pushed, `gh pr create` opens an interactive prompt asking where
+to push, and this skill runs it non-interactively, so it would hang instead of
+opening the PR.
 
 The PR body lists the edits made, any edits skipped and why, and any advisory
 findings observed.
