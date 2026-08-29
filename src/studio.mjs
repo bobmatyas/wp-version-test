@@ -12,6 +12,10 @@ export function run(cmd, args, { cwd, timeoutMs = 600000, input } = {}) {
 
     // Always close stdin: `studio delete` prompts for confirmation, and an
     // open stdin would hang the run waiting for input that never comes.
+    // A no-op 'error' handler keeps a write to an already-closed stdin (EPIPE)
+    // from becoming an unhandled exception that crashes the whole process;
+    // the close/error handling on the ChildProcess below still decides the result.
+    child.stdin.on('error', () => {});
     if (input !== undefined) child.stdin.write(input);
     child.stdin.end();
 
