@@ -75,6 +75,22 @@ test('attributes by repo path, falling back to indirect', () => {
   assert.equal(findings[2].attribution, 'indirect');
 });
 
+test('does not mislabel sibling directories as direct', () => {
+  const findings = classifyEntries(
+    [entry({ file: '/repos/my-plugin-pro/inc/a.php' })],
+    { slug: 'my-plugin', repoDir: '/repos/my-plugin' },
+  );
+  assert.equal(findings[0].attribution, 'indirect');
+});
+
+test('file exactly matching repoDir is direct', () => {
+  const findings = classifyEntries(
+    [entry({ file: '/repos/my-plugin' })],
+    { slug: 'my-plugin', repoDir: '/repos/my-plugin' },
+  );
+  assert.equal(findings[0].attribution, 'direct');
+});
+
 test('activation and smoke failures are blocking', () => {
   const a = activationFinding('p', 'Error: plugin could not be activated');
   assert.equal(a.severity, 'blocking');

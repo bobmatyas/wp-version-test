@@ -16,7 +16,7 @@ export function classifyEntries(entries, { slug, repoDir }) {
     slug,
     severity: isBlocking(entry) ? 'blocking' : 'advisory',
     kind: kindFor(entry),
-    attribution: entry.file && entry.file.startsWith(repoDir) ? 'direct' : 'indirect',
+    attribution: isDirectAttribution(entry.file, repoDir) ? 'direct' : 'indirect',
     message: entry.message,
     file: entry.file,
     line: entry.line,
@@ -48,6 +48,11 @@ export function smokeFinding(slug, result) {
     line: null,
     raw: JSON.stringify(result),
   };
+}
+
+function isDirectAttribution(file, repoDir) {
+  if (!file) return false;
+  return file === repoDir || file.startsWith(`${repoDir}/`);
 }
 
 function isBlocking(entry) {
