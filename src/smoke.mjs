@@ -1,3 +1,15 @@
+function isAdminUrl(urlString) {
+  try {
+    const url = new URL(urlString);
+    const pathname = url.pathname;
+    // Match /wp-admin exactly or /wp-admin/... as a path segment
+    return pathname === '/wp-admin' || pathname.startsWith('/wp-admin/');
+  } catch {
+    // Unparseable URLs are not admin URLs
+    return false;
+  }
+}
+
 export function hasFatalSignature(body) {
   // Match PHP error wrapper: <b>Fatal error</b> or <b>Parse error</b>
   if (/<b>\s*(Fatal error|Parse error)\s*<\/b>/i.test(body)) {
@@ -41,10 +53,18 @@ export async function checkUrl(url, { fetchImpl = fetch, timeoutMs = 10000 } = {
     const res = await fetchImpl(url, { signal: controller.signal, redirect: 'follow' });
 
     // Detect redirect away from /wp-admin/ when requested to stay in /wp-admin/
-    if (url.includes('/wp-admin/') && res.redirected && res.url && !res.url.includes('/wp-admin/')) {
-      const isLoginPage = res.url.includes('wp-login.php') || res.url.includes('login');
-      const authMsg = isLoginPage ? ' — the harness token did not authenticate' : '';
-      return { url, status: res.status, ok: false, reason: `Redirected from ${url} to ${res.url}${authMsg}` };
+    if (isAdminUrl(url) && res.redirected && res.url) {
+      const requestedUrl = new URL(url);
+      const finalUrlStr = res.url;
+      const finalUrl = new URL(finalUrlStr);
+
+      // Redirect failed if: origin changed OR final URL is not admin
+      if (requestedUrl.origin !== finalUrl.origin || !isAdminUrl(finalUrlStr)) {
+        // Check if final URL looks like a login page
+        const isLoginPage = finalUrl.pathname.includes('wp-login.php') || finalUrl.pathname.endsWith('/login');
+        const authMsg = isLoginPage ? ' — the harness token did not authenticate' : '';
+        return { url, status: res.status, ok: false, reason: `Redirected from ${url} to ${res.url}${authMsg}` };
+      }
     }
 
     const body = await res.text();

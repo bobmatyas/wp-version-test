@@ -183,3 +183,73 @@ test('passes front-page URL redirected off /wp-admin/', async () => {
   assert.equal(r.ok, true);
   assert.equal(r.reason, null);
 });
+
+test('fails on /wp-admin without trailing slash redirected to root', async () => {
+  const r = await checkUrl('http://x/wp-admin', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/',
+      text: async () => '<html>homepage</html>',
+    }),
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Redirected/);
+});
+
+test('fails on cross-host redirect from admin URL', async () => {
+  const r = await checkUrl('http://host/wp-admin/plugins.php', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://evil/wp-admin/gate.php',
+      text: async () => '<html>gate</html>',
+    }),
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Redirected/);
+  assert.match(r.reason, /evil/);
+});
+
+test('fails when final URL has /wp-admin/ only in query string', async () => {
+  const r = await checkUrl('http://x/wp-admin/options.php', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/dashboard/?ref=/wp-admin/options.php',
+      text: async () => '<html>dashboard</html>',
+    }),
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Redirected/);
+});
+
+test('passes non-admin request with /wp-admin/ only in query string', async () => {
+  const r = await checkUrl('http://x/?ref=/wp-admin/', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/new-home/',
+      text: async () => '<html>home</html>',
+    }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, null);
+});
+
+test('does not throw on unparseable URL', async () => {
+  const r = await checkUrl('not a valid url', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      text: async () => '<html>ok</html>',
+    }),
+  });
+  // Should not throw; invalid URL is treated as non-admin, so no redirect rule applies
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, null);
+});
