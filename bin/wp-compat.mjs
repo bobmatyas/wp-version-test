@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir, writeFile, readFile, rm, symlink, truncate } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, rm, symlink, truncate, access } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
@@ -69,6 +69,19 @@ async function main() {
   }
   const plugins = only ? config.plugins.filter((p) => only.includes(p.slug)) : config.plugins;
 
+  // A previous --keep-site run may have left a site registered in Studio whose
+  // files we're about to delete out from under it. Deregister it properly first
+  // so Studio's registry doesn't end up with a broken entry pointing at a
+  // directory that no longer exists. Best-effort: a failure here must not abort
+  // the run, since the whole point is to still be able to test.
+  if (await pathExists(SITE)) {
+    try {
+      await deleteSite(SITE);
+    } catch (e) {
+      console.warn(`Could not clean up the previous site at ${SITE}: ${e.message}`);
+    }
+  }
+
   await rm(WORK, { recursive: true, force: true });
   await mkdir(REPOS, { recursive: true });
 
@@ -79,122 +92,137 @@ async function main() {
   const { url } = await createSite({
     path: SITE, name: `wp-compat-${wpVersion}`, wp: wpVersion, php: config.phpVersion,
   });
-  await enableDebugLog(SITE);
-  await writeHarness(SITE, token);
 
-  const pcpInstall = await wp(SITE, ['plugin', 'install', 'plugin-check', '--activate']);
-  const pcpAvailable = pcpInstall.code === 0;
-  if (!pcpAvailable) {
-    console.warn('Plugin Check could not be installed; continuing with the compat track only.');
-  }
+  try {
+    await enableDebugLog(SITE);
+    await writeHarness(SITE, token);
 
-  const debugLog = join(SITE, 'wp-content', 'debug.log');
+    const pcpInstall = await wp(SITE, ['plugin', 'install', 'plugin-check', '--activate']);
+    const pcpAvailable = pcpInstall.code === 0;
+    if (!pcpAvailable) {
+      console.warn('Plugin Check could not be installed; continuing with the compat track only.');
+    }
 
-  // Baseline: the noise floor with no test plugins active.
-  console.log('Capturing baseline…');
-  await truncate(debugLog, 0).catch(() => {});
-  await clearMenuSlugs(SITE);
-  await runSmoke(buildSmokeUrls(url, { token }));
-  const baselineEntries = parseDebugLog(await readSafe(debugLog));
-  const baselineMenu = await readMenuSlugs(SITE);
+    const debugLog = join(SITE, 'wp-content', 'debug.log');
 
-  const storedBaseline = command === 'run' ? await readBaseline() : {};
-  const results = [];
-  const pcpPerPlugin = {};
+    // Baseline: the noise floor with no test plugins active.
+    console.log('Capturing baseline…');
+    await truncate(debugLog, 0).catch(() => {});
+    await clearMenuSlugs(SITE);
+    await runSmoke(buildSmokeUrls(url, { token }));
+    const baselineEntries = parseDebugLog(await readSafe(debugLog));
+    const baselineMenu = await readMenuSlugs(SITE);
 
-  for (const plugin of plugins) {
-    console.log(`Testing ${plugin.slug}…`);
-    const dest = join(REPOS, plugin.slug);
-    const result = {
-      slug: plugin.slug, repo: plugin.repo, sha: null, branch: plugin.branch,
-      runError: null, blocking: [], advisory: [], smoke: [],
-      pluginCheck: { available: false, newErrors: [] }, bumpEligible: false,
-    };
+    const storedBaseline = command === 'run' ? await readBaseline() : {};
+    const results = [];
+    const pcpPerPlugin = {};
 
-    try {
-      const { sha } = await cloneOrFetch({
-        owner: config.owner, repo: plugin.repo, branch: plugin.branch, dest,
-      });
-      result.sha = sha;
+    for (const plugin of plugins) {
+      console.log(`Testing ${plugin.slug}…`);
+      const dest = join(REPOS, plugin.slug);
+      const result = {
+        slug: plugin.slug, repo: plugin.repo, sha: null, branch: plugin.branch,
+        runError: null, blocking: [], advisory: [], smoke: [],
+        pluginCheck: { available: false, newErrors: [] }, bumpEligible: false,
+      };
 
-      await symlink(dest, join(SITE, 'wp-content', 'plugins', plugin.slug));
-      await truncate(debugLog, 0).catch(() => {});
-      await clearMenuSlugs(SITE);
+      try {
+        const { sha } = await cloneOrFetch({
+          owner: config.owner, repo: plugin.repo, branch: plugin.branch, dest,
+        });
+        result.sha = sha;
 
-      const activation = await wp(SITE, ['plugin', 'activate', plugin.slug]);
-      if (activation.code !== 0) {
-        result.blocking.push(activationFinding(plugin.slug, activation.stderr || activation.stdout));
-      } else {
-        // Prime the admin with one authenticated request so the harness's admin_menu
-        // hook fires and rewrites the menu file before we read it. The result is
-        // discarded — the real smoke pass below is what gets recorded.
-        await checkUrl(buildSmokeUrls(url, { token })[1]);
-        const menuSlugs = (await readMenuSlugs(SITE)).filter((s) => !baselineMenu.includes(s));
-        result.smoke = await runSmoke(buildSmokeUrls(url, {
-          menuSlugs, adminPaths: plugin.adminPaths, token,
-        }));
-        for (const failure of result.smoke.filter((s) => !s.ok)) {
-          result.blocking.push(smokeFinding(plugin.slug, failure));
-        }
+        await symlink(dest, join(SITE, 'wp-content', 'plugins', plugin.slug));
+        await truncate(debugLog, 0).catch(() => {});
+        await clearMenuSlugs(SITE);
 
-        const entries = diffEntries(baselineEntries, parseDebugLog(await readSafe(debugLog)));
-        for (const finding of classifyEntries(entries, { slug: plugin.slug, repoDir: dest })) {
-          (finding.severity === 'blocking' ? result.blocking : result.advisory).push(finding);
-        }
+        const activation = await wp(SITE, ['plugin', 'activate', plugin.slug]);
+        if (activation.code !== 0) {
+          result.blocking.push(activationFinding(plugin.slug, activation.stderr || activation.stdout));
+        } else {
+          // Prime the admin with one authenticated request so the harness's admin_menu
+          // hook fires and rewrites the menu file before we read it. The result is
+          // discarded — the real smoke pass below is what gets recorded.
+          await checkUrl(buildSmokeUrls(url, { token })[1]);
+          const menuSlugs = (await readMenuSlugs(SITE)).filter((s) => !baselineMenu.includes(s));
+          result.smoke = await runSmoke(buildSmokeUrls(url, {
+            menuSlugs, adminPaths: plugin.adminPaths, token,
+          }));
+          for (const failure of result.smoke.filter((s) => !s.ok)) {
+            result.blocking.push(smokeFinding(plugin.slug, failure));
+          }
 
-        if (pcpAvailable) {
-          const args = ['plugin', 'check', plugin.slug, '--format=ctrf'];
-          if (plugin.ignoreCodes.length) args.push(`--ignore-codes=${plugin.ignoreCodes.join(',')}`);
-          const pcp = await wp(SITE, args);
-          if (pcp.code === 0) {
-            try {
-              const all = errorsOnly(parseCtrf(pcp.stdout));
-              pcpPerPlugin[plugin.slug] = all;
-              result.pluginCheck = {
-                available: true,
-                newErrors: diffAgainstBaseline(plugin.slug, all, storedBaseline),
-              };
-            } catch (e) {
-              console.warn(`  Plugin Check output unparseable: ${e.message}`);
+          const entries = diffEntries(baselineEntries, parseDebugLog(await readSafe(debugLog)));
+          for (const finding of classifyEntries(entries, { slug: plugin.slug, repoDir: dest })) {
+            (finding.severity === 'blocking' ? result.blocking : result.advisory).push(finding);
+          }
+
+          if (pcpAvailable) {
+            const args = ['plugin', 'check', plugin.slug, '--format=ctrf'];
+            if (plugin.ignoreCodes.length) args.push(`--ignore-codes=${plugin.ignoreCodes.join(',')}`);
+            const pcp = await wp(SITE, args);
+            if (pcp.code === 0) {
+              try {
+                const all = errorsOnly(parseCtrf(pcp.stdout));
+                pcpPerPlugin[plugin.slug] = all;
+                result.pluginCheck = {
+                  available: true,
+                  newErrors: diffAgainstBaseline(plugin.slug, all, storedBaseline),
+                };
+              } catch (e) {
+                console.warn(`  Plugin Check output unparseable: ${e.message}`);
+              }
             }
           }
         }
+
+        await wp(SITE, ['plugin', 'deactivate', plugin.slug]);
+      } catch (e) {
+        result.runError = e.message;
+      } finally {
+        await rm(join(SITE, 'wp-content', 'plugins', plugin.slug), { force: true }).catch(() => {});
       }
 
-      await wp(SITE, ['plugin', 'deactivate', plugin.slug]);
-    } catch (e) {
-      result.runError = e.message;
-    } finally {
-      await rm(join(SITE, 'wp-content', 'plugins', plugin.slug), { force: true }).catch(() => {});
+      result.bumpEligible = result.runError === null && result.blocking.length === 0;
+      results.push(result);
     }
 
-    result.bumpEligible = result.runError === null && result.blocking.length === 0;
-    results.push(result);
-  }
-
-  if (command === 'baseline') {
-    await writeFile(BASELINE_FILE, `${JSON.stringify(buildBaseline(pcpPerPlugin), null, 2)}\n`);
-    console.log(`Wrote ${BASELINE_FILE}`);
-  } else {
-    const report = {
-      wpVersion, phpVersion: config.phpVersion, startedAt,
-      finishedAt: new Date().toISOString(), owner: config.owner, plugins: results,
-    };
-    await writeFile(join(WORK, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-    await writeFile(join(WORK, 'report.md'), renderMarkdown(report));
-    console.log(`\n${renderMarkdown(report)}`);
-    console.log(`Wrote ${join(WORK, 'report.json')} and report.md`);
-  }
-
-  if (!flags.keepSite) {
-    await deleteSite(SITE);
-  } else {
-    console.log(`Site kept at ${SITE} (${url})`);
+    if (command === 'baseline') {
+      await writeFile(BASELINE_FILE, `${JSON.stringify(buildBaseline(pcpPerPlugin), null, 2)}\n`);
+      console.log(`Wrote ${BASELINE_FILE}`);
+    } else {
+      const report = {
+        wpVersion, phpVersion: config.phpVersion, startedAt,
+        finishedAt: new Date().toISOString(), owner: config.owner, plugins: results,
+      };
+      await writeFile(join(WORK, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+      await writeFile(join(WORK, 'report.md'), renderMarkdown(report));
+      console.log(`\n${renderMarkdown(report)}`);
+      console.log(`Wrote ${join(WORK, 'report.json')} and report.md`);
+    }
+  } finally {
+    // Teardown must run whether the pipeline above succeeded or threw, so a
+    // crash never orphans a real Studio site registration. Keep this
+    // defensive: a failure here must not mask whatever error is already
+    // propagating out of the try block above.
+    if (!flags.keepSite) {
+      try {
+        await deleteSite(SITE);
+      } catch (e) {
+        console.warn(`Could not tear down the site at ${SITE}: ${e.message}`);
+      }
+    } else {
+      console.log(`Site kept at ${SITE} (${url})`);
+    }
   }
 }
 
 async function readSafe(path) {
   try { return await readFile(path, 'utf8'); } catch { return ''; }
+}
+
+async function pathExists(path) {
+  try { await access(path); return true; } catch { return false; }
 }
 
 async function readBaseline() {
