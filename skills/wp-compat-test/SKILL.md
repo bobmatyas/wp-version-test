@@ -26,7 +26,14 @@ Propose, wait, write, repeat.
 node bin/wp-compat.mjs run [--wp <version>] [--only <slug,...>] [--keep-site]
 ```
 
-Default version is `latest`. Available versions are `nightly`, `7.1`, `7.0`,
+Default version is `latest`. `latest` and `nightly` are things Studio
+understands, not WordPress version numbers: the CLI asks the provisioned site
+what it actually installed and records that concrete version. **Always take the
+version from `report.json`'s `wpVersion` — never from what you passed on the
+command line.** Writing `latest` into a `Tested up to:` header would produce an
+invalid wordpress.org header in a public repo.
+
+Available versions are `nightly`, `7.1`, `7.0`,
 `6.9`, `6.8`, `6.7`, `6.6`, `6.5`, `6.4`, `6.3`, `6.2` (Studio has no
 `-beta`/`-RC` identifiers — `nightly` is how you test the upcoming release).
 If an invalid version is given, the CLI reports the available list; don't
@@ -42,8 +49,19 @@ writes.
 
 ## Step 2: Read the report
 
-Read `.work/report.json`. For each plugin it holds `blocking`, `advisory`,
-`smoke`, `pluginCheck.newErrors`, `runError`, and `bumpEligible`.
+Read `.work/report.json`. The top level holds `wpVersion` — the concrete
+version that was installed — and `phpVersion`. For each plugin it holds
+`blocking`, `advisory`, `smoke`, `pluginCheck.newErrors`, `runError`, and
+`bumpEligible`.
+
+Each compat finding carries a `count`: identical findings are grouped within a
+run, so one entry with `count: 260` is one root cause that logged 260 times,
+not 260 problems. Report the root cause and mention the volume; never list a
+grouped finding once per occurrence.
+
+File paths in findings are relative — to the plugin's own directory for its own
+files, and to the site root (`wp-includes/...`) for WordPress core files. They
+carry no local machine paths, so they are safe to quote in a public issue.
 
 `bumpEligible` is `true` only when `runError` is `null` and `blocking` is
 empty — advisory findings and Plugin Check errors never block eligibility.
@@ -119,7 +137,7 @@ Use `src/version.mjs` for every edit. Apply, in the plugin's clone at
 
 - main plugin file `Version:` → `bumpPatch(current)` via `updatePluginHeaderVersion`
 - `readme.txt` `Stable tag:` → the new version via `updateReadmeStableTag`
-- `readme.txt` `Tested up to:` → the WordPress version tested via `updateReadmeTestedUpTo`
+- `readme.txt` `Tested up to:` → `report.json`'s `wpVersion` via `updateReadmeTestedUpTo`
 - a new entry at the top of `readme.txt`'s `== Changelog ==` via `insertReadmeChangelog`
 - `CHANGELOG.md`, if it exists, via `insertMarkdownChangelog`
 - a version constant matching the old version, if present, via `updateVersionConstant`
@@ -165,6 +183,8 @@ findings observed.
 Tell the user what was created, what was updated, what was skipped and why.
 Never claim a write happened without the `gh` output confirming it.
 
+In all of the above, `<version>` is `report.json`'s `wpVersion`.
+
 ## Failure modes
 
 - **`studio` not found** — tell the user to enable Settings → General → Studio
@@ -175,3 +195,6 @@ Never claim a write happened without the `gh` output confirming it.
 - **Plugin Check unavailable** — the compat track still stands; say the Plugin
   Check track did not run (`pluginCheck.available` is `false` for every
   plugin).
+- **The run aborts saying the test harness is not authenticating** — the
+  baseline pass failed before any plugin was tested. Nothing about the
+  plugins was learned; report the harness fault and propose no writes.

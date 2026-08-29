@@ -7,11 +7,14 @@ import { randomBytes } from 'node:crypto';
 import { loadConfig } from '../src/config.mjs';
 import { parseDebugLog } from '../src/logparse.mjs';
 import { diffEntries, classifyEntries, activationFinding, smokeFinding } from '../src/classify.mjs';
-import { parseCtrf, errorsOnly, diffAgainstBaseline, buildBaseline } from '../src/plugincheck.mjs';
+import {
+  parseCtrf, errorsOnly, relativizeFindings, diffAgainstBaseline, buildBaseline,
+} from '../src/plugincheck.mjs';
 import { buildSmokeUrls, runSmoke, checkUrl } from '../src/smoke.mjs';
 import { renderMarkdown } from '../src/report.mjs';
 import {
   assertStudioAvailable, availableWpVersions, createSite, enableDebugLog, wp, deleteSite,
+  resolveWpVersion,
 } from '../src/studio.mjs';
 import { cloneOrFetch } from '../src/repos.mjs';
 import { writeHarness, readMenuSlugs, clearMenuSlugs } from '../src/harness.mjs';
@@ -30,7 +33,13 @@ function parseArgs(argv) {
     if (!arg.startsWith('--')) continue;
     const key = arg.slice(2);
     if (key === 'keep-site') { flags.keepSite = true; continue; }
-    flags[key] = argv[i + 1];
+    // A value that is itself a flag means the value was omitted: `--only
+    // --keep-site` must not silently set only === '--keep-site'.
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error(`Flag ${arg} requires a value.`);
+    }
+    flags[key] = value;
     i += 1;
   }
   return { command, flags };
@@ -47,12 +56,15 @@ async function main() {
   const config = await loadConfig(configPath);
   await assertStudioAvailable();
 
-  const wpVersion = flags.wp ?? 'latest';
-  if (wpVersion !== 'latest') {
+  // What the user asked for. Studio understands "latest"; nothing downstream
+  // does, so this string is used for `studio create` and nothing else.
+  const requestedWpVersion = flags.wp ?? 'latest';
+  if (requestedWpVersion !== 'latest') {
     const available = await availableWpVersions();
-    if (available.length && !available.includes(wpVersion)) {
+    if (available.length && !available.includes(requestedWpVersion)) {
       throw new Error(
-        `WordPress version "${wpVersion}" is not available. Available: ${available.join(', ')}`,
+        `WordPress version "${requestedWpVersion}" is not available. ` +
+        `Available: ${available.join(', ')}`,
       );
     }
   }
@@ -69,16 +81,22 @@ async function main() {
   }
   const plugins = only ? config.plugins.filter((p) => only.includes(p.slug)) : config.plugins;
 
-  // A previous --keep-site run may have left a site registered in Studio whose
-  // files we're about to delete out from under it. Deregister it properly first
-  // so Studio's registry doesn't end up with a broken entry pointing at a
-  // directory that no longer exists. Best-effort: a failure here must not abort
-  // the run, since the whole point is to still be able to test.
+  // A previous --keep-site run, or a previous failed teardown, may have left a
+  // site registered in Studio whose files we're about to delete out from under
+  // it. Deregister it properly first so Studio's registry doesn't end up with
+  // a broken entry pointing at a directory that no longer exists.
   if (await pathExists(SITE)) {
     try {
       await deleteSite(SITE);
     } catch (e) {
-      console.warn(`Could not clean up the previous site at ${SITE}: ${e.message}`);
+      // Nothing useful is downstream of this: the `rm` below would erase the
+      // last trace of a site that is still registered, and `studio create`
+      // would then collide with that registration at the same path.
+      throw new Error(
+        `Could not clean up the previous site at ${SITE}: ${e.message}\n` +
+        'Refusing to continue — removing this directory now would orphan a site ' +
+        'that is still registered in the Studio app. Delete it there, then re-run.',
+      );
     }
   }
 
@@ -88,12 +106,26 @@ async function main() {
   const token = randomBytes(16).toString('hex');
   const startedAt = new Date().toISOString();
 
-  console.log(`Provisioning WordPress ${wpVersion} on PHP ${config.phpVersion}…`);
-  const { url } = await createSite({
-    path: SITE, name: `wp-compat-${wpVersion}`, wp: wpVersion, php: config.phpVersion,
-  });
-
+  // Provisioning is inside the guarded region on purpose: `studio create
+  // --start` registers the site before it starts it, and starting is exactly
+  // what fails on a port conflict. A throw out here would skip teardown and
+  // orphan the registration.
+  let url = null;
   try {
+    console.log(`Provisioning WordPress ${requestedWpVersion} on PHP ${config.phpVersion}…`);
+    ({ url } = await createSite({
+      path: SITE,
+      name: `wp-compat-${requestedWpVersion}`,
+      wp: requestedWpVersion,
+      php: config.phpVersion,
+    }));
+
+    // Ask the site what it actually is. "latest" must never travel further:
+    // it is recorded in report.json, rendered into report.md, and copied by
+    // the skill into a public plugin's `Tested up to:` header.
+    const wpVersion = await resolveWpVersion(SITE);
+    console.log(`Provisioned WordPress ${wpVersion}.`);
+
     await enableDebugLog(SITE);
     await writeHarness(SITE, token);
 
@@ -109,7 +141,25 @@ async function main() {
     console.log('Capturing baseline…');
     await truncate(debugLog, 0).catch(() => {});
     await clearMenuSlugs(SITE);
-    await runSmoke(buildSmokeUrls(url, { token }));
+    // With no test plugins active every one of these must pass. If they do
+    // not, the fault is the harness (token mismatch, no `admin` user, mu-plugin
+    // not loaded) and every plugin would fail identically — producing a report
+    // full of real-looking findings the skill would turn into bogus issues on
+    // public repos. Stop here instead.
+    const baselineSmoke = await runSmoke(buildSmokeUrls(url, { token }));
+    const baselineSmokeFailures = baselineSmoke.filter((s) => !s.ok);
+    if (baselineSmokeFailures.length) {
+      const detail = baselineSmokeFailures.map((s) => `  ${s.url} — ${s.reason}`).join('\n');
+      const adminFailed = baselineSmokeFailures.some((s) => s.url.includes('/wp-admin/'));
+      const cause = adminFailed
+        ? 'The test harness is not authenticating: the baseline admin checks failed'
+        : 'The baseline smoke pass failed';
+      throw new Error(
+        `${cause} with no test plugins active, so every plugin would report the ` +
+        `same failure. No plugin was tested.\n${detail}`,
+      );
+    }
+
     const baselineEntries = parseDebugLog(await readSafe(debugLog));
     const baselineMenu = await readMenuSlugs(SITE);
 
@@ -120,6 +170,7 @@ async function main() {
     for (const plugin of plugins) {
       console.log(`Testing ${plugin.slug}…`);
       const dest = join(REPOS, plugin.slug);
+      const link = join(SITE, 'wp-content', 'plugins', plugin.slug);
       const result = {
         slug: plugin.slug, repo: plugin.repo, sha: null, branch: plugin.branch,
         runError: null, blocking: [], advisory: [], smoke: [],
@@ -132,7 +183,7 @@ async function main() {
         });
         result.sha = sha;
 
-        await symlink(dest, join(SITE, 'wp-content', 'plugins', plugin.slug));
+        await symlink(dest, link);
         await truncate(debugLog, 0).catch(() => {});
         await clearMenuSlugs(SITE);
 
@@ -153,7 +204,9 @@ async function main() {
           }
 
           const entries = diffEntries(baselineEntries, parseDebugLog(await readSafe(debugLog)));
-          for (const finding of classifyEntries(entries, { slug: plugin.slug, repoDir: dest })) {
+          for (const finding of classifyEntries(entries, {
+            slug: plugin.slug, repoDir: dest, pluginDir: link, siteDir: SITE,
+          })) {
             (finding.severity === 'blocking' ? result.blocking : result.advisory).push(finding);
           }
 
@@ -163,7 +216,10 @@ async function main() {
             const pcp = await wp(SITE, args);
             if (pcp.code === 0) {
               try {
-                const all = errorsOnly(parseCtrf(pcp.stdout));
+                const all = relativizeFindings(
+                  errorsOnly(parseCtrf(pcp.stdout)),
+                  { repoDir: dest, pluginDir: link, siteDir: SITE },
+                );
                 pcpPerPlugin[plugin.slug] = all;
                 result.pluginCheck = {
                   available: true,
@@ -175,12 +231,15 @@ async function main() {
             }
           }
         }
-
-        await wp(SITE, ['plugin', 'deactivate', plugin.slug]);
       } catch (e) {
         result.runError = e.message;
       } finally {
-        await rm(join(SITE, 'wp-content', 'plugins', plugin.slug), { force: true }).catch(() => {});
+        // One plugin active at a time is the foundation the whole attribution
+        // design rests on, so deactivation has to be structural rather than
+        // incidental: a throw anywhere above would otherwise leave the plugin
+        // in active_plugins with its directory about to disappear.
+        await wp(SITE, ['plugin', 'deactivate', plugin.slug]).catch(() => {});
+        await rm(link, { force: true }).catch(() => {});
       }
 
       result.bumpEligible = result.runError === null && result.blocking.length === 0;
@@ -188,8 +247,34 @@ async function main() {
     }
 
     if (command === 'baseline') {
-      await writeFile(BASELINE_FILE, `${JSON.stringify(buildBaseline(pcpPerPlugin), null, 2)}\n`);
-      console.log(`Wrote ${BASELINE_FILE}`);
+      // Only re-measured slugs may be replaced. `pcpPerPlugin` gains a key
+      // only when Plugin Check both ran and parsed, so writing it wholesale
+      // would drop every slug outside --only, and would silently drop any
+      // slug whose clone failed — after which the next run reports that
+      // plugin's entire pre-existing backlog as new.
+      const existing = await readBaseline();
+      const measured = buildBaseline(pcpPerPlugin);
+      const merged = sortKeys({ ...existing, ...measured });
+      await writeFile(BASELINE_FILE, `${JSON.stringify(merged, null, 2)}\n`);
+      console.log(
+        `Wrote ${BASELINE_FILE} — re-measured ${Object.keys(measured).length} of ` +
+        `${plugins.length} slug(s); ${Object.keys(merged).length} in the file.`,
+      );
+
+      const unmeasured = plugins.map((p) => p.slug).filter((slug) => !(slug in measured));
+      if (unmeasured.length) {
+        const kept = unmeasured.filter((slug) => slug in existing);
+        const absent = unmeasured.filter((slug) => !(slug in existing));
+        console.warn('\n!! WARNING: Plugin Check produced no usable output for:');
+        for (const slug of kept) console.warn(`!!   ${slug} — previous baseline entry left unchanged`);
+        for (const slug of absent) {
+          console.warn(
+            `!!   ${slug} — NO baseline entry exists; the next run will report its ` +
+            'entire pre-existing backlog as new. Re-run the baseline for it.',
+          );
+        }
+        console.warn('');
+      }
     } else {
       const report = {
         wpVersion, phpVersion: config.phpVersion, startedAt,
@@ -205,14 +290,21 @@ async function main() {
     // crash never orphans a real Studio site registration. Keep this
     // defensive: a failure here must not mask whatever error is already
     // propagating out of the try block above.
-    if (!flags.keepSite) {
+    // `url` is null when createSite threw — but it may still have registered
+    // the site and created its directory before failing to start, so the
+    // directory existing is the second signal that there is something to
+    // tear down.
+    const provisioned = url !== null || await pathExists(SITE);
+    if (!provisioned) {
+      // Nothing reached disk; there is nothing registered to deregister.
+    } else if (flags.keepSite) {
+      console.log(`Site kept at ${SITE}${url ? ` (${url})` : ''}`);
+    } else {
       try {
         await deleteSite(SITE);
       } catch (e) {
         console.warn(`Could not tear down the site at ${SITE}: ${e.message}`);
       }
-    } else {
-      console.log(`Site kept at ${SITE} (${url})`);
     }
   }
 }
@@ -223,6 +315,12 @@ async function readSafe(path) {
 
 async function pathExists(path) {
   try { await access(path); return true; } catch { return false; }
+}
+
+function sortKeys(obj) {
+  return Object.fromEntries(
+    Object.entries(obj).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
 }
 
 async function readBaseline() {

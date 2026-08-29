@@ -30,10 +30,14 @@ export function menuSlugToPath(slug) {
 
 export function buildSmokeUrls(baseUrl, { menuSlugs = [], adminPaths = [], token }) {
   const base = baseUrl.replace(/\/$/, '');
+  // A menu slug that is an external URL is a real pattern — "Docs", "Upgrade" —
+  // and admin.php answers `?page=https%3A%2F%2F…` with wp_die(), which would
+  // register as a blocking smoke failure and stop a legitimate version bump.
+  const localSlugs = menuSlugs.filter((slug) => !/^https?:\/\//i.test(slug));
   const adminOnly = [
     '/wp-admin/',
     '/wp-admin/plugins.php',
-    ...menuSlugs.map(menuSlugToPath),
+    ...localSlugs.map(menuSlugToPath),
     ...adminPaths,
   ];
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  parseCtrf, errorsOnly, baselineKey, diffAgainstBaseline, buildBaseline,
+  parseCtrf, errorsOnly, relativizeFindings, baselineKey, diffAgainstBaseline, buildBaseline,
 } from '../src/plugincheck.mjs';
 
 const fixture = (name) =>
@@ -64,4 +64,41 @@ test('buildBaseline produces sorted keys per slug', () => {
   const baseline = buildBaseline({ p: findings });
   assert.deepEqual(baseline.p, [...baseline.p].sort());
   assert.equal(baseline.p.length, 2);
+});
+
+test('relativizeFindings rewrites an absolute path under the clone', () => {
+  const dirs = {
+    repoDir: '/Users/me/.work/repos/p',
+    pluginDir: '/Users/me/.work/site/wp-content/plugins/p',
+    siteDir: '/Users/me/.work/site',
+  };
+  const [f] = relativizeFindings(
+    [{ code: 'X', filePath: '/Users/me/.work/repos/p/includes/settings.php', line: 4 }],
+    dirs,
+  );
+  assert.equal(f.filePath, 'includes/settings.php');
+  assert.equal(f.line, 4, 'other fields are preserved');
+});
+
+test('relativizeFindings leaves an already-relative path alone', () => {
+  const [f] = relativizeFindings([{ code: 'X', filePath: 'readme.txt' }], { repoDir: '/r' });
+  assert.equal(f.filePath, 'readme.txt');
+});
+
+test('a baseline key is identical on two machines with different checkout paths', () => {
+  // This is the whole point: an absolute path in the key means every key
+  // misses on any other machine, and the first run dumps the whole backlog.
+  const finding = (root) => ({
+    code: 'Generic.PHP.ForbiddenFunctions.Found',
+    filePath: `${root}/includes/settings.php`,
+    line: 12,
+  });
+  const alice = relativizeFindings([finding('/Users/alice/dev/.work/repos/p')], {
+    repoDir: '/Users/alice/dev/.work/repos/p',
+  });
+  const bob = relativizeFindings([finding('/home/bob/code/.work/repos/p')], {
+    repoDir: '/home/bob/code/.work/repos/p',
+  });
+  assert.equal(baselineKey('p', alice[0]), baselineKey('p', bob[0]));
+  assert.ok(!baselineKey('p', alice[0]).includes('/Users/'));
 });

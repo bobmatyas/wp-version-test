@@ -1,3 +1,5 @@
+import { relativizePath } from './paths.mjs';
+
 export function parseCtrf(text) {
   let doc;
   try {
@@ -28,6 +30,13 @@ export function parseCtrf(text) {
 
 export function errorsOnly(findings) {
   return findings.filter((f) => f.findingType === 'ERROR');
+}
+
+// Plugin Check reports PHPCS-sourced findings with absolute paths. Those must
+// not reach the baseline key (which is committed and read on other machines)
+// or the report (which is pasted into a public GitHub issue).
+export function relativizeFindings(findings, dirs) {
+  return findings.map((f) => ({ ...f, filePath: relativizePath(f.filePath, dirs) }));
 }
 
 export function baselineKey(slug, finding) {

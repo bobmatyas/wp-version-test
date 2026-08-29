@@ -1,3 +1,5 @@
+import { relativizePath, relativizeText } from './paths.mjs';
+
 const BLOCKING_LEVELS = new Set(['Fatal error', 'Parse error', 'Recoverable fatal error']);
 const PATH_PREFIX_RE = /^.*?((?:wp-content|wp-includes|wp-admin)\/.*)$/;
 
@@ -11,17 +13,38 @@ export function diffEntries(baseline, current) {
   return current.filter((entry) => !known.has(normalizeKey(entry)));
 }
 
-export function classifyEntries(entries, { slug, repoDir }) {
-  return entries.map((entry) => ({
-    slug,
-    severity: isBlocking(entry) ? 'blocking' : 'advisory',
-    kind: kindFor(entry),
-    attribution: isDirectAttribution(entry.file, repoDir) ? 'direct' : 'indirect',
-    message: entry.message,
-    file: entry.file,
-    line: entry.line,
-    raw: entry.raw,
-  }));
+// One root cause can log thousands of times in a single request — a real run
+// produced 261 entries that reduced to two distinct problems. Emitting one
+// finding each buries the triage the report exists to enable, so group within
+// the run on the same key the baseline diff already uses, keep the first
+// occurrence as the representative, and carry the tally as `count`.
+export function classifyEntries(entries, { slug, repoDir, pluginDir, siteDir } = {}) {
+  const dirs = { repoDir, pluginDir, siteDir };
+  const groups = new Map();
+
+  for (const entry of entries) {
+    const key = normalizeKey(entry);
+    const seen = groups.get(key);
+    if (seen) {
+      seen.count += 1;
+      continue;
+    }
+    groups.set(key, {
+      slug,
+      severity: isBlocking(entry) ? 'blocking' : 'advisory',
+      kind: kindFor(entry),
+      // Attribution is decided on the absolute path, before it is relativised:
+      // being under the clone directory is the whole test.
+      attribution: isDirectAttribution(entry.file, repoDir) ? 'direct' : 'indirect',
+      message: entry.message,
+      file: relativizePath(entry.file, dirs),
+      line: entry.line,
+      raw: relativizeText(entry.raw, dirs),
+      count: 1,
+    });
+  }
+
+  return [...groups.values()];
 }
 
 export function activationFinding(slug, stderr) {
@@ -34,6 +57,7 @@ export function activationFinding(slug, stderr) {
     file: null,
     line: null,
     raw: stderr,
+    count: 1,
   };
 }
 
@@ -47,6 +71,7 @@ export function smokeFinding(slug, result) {
     file: null,
     line: null,
     raw: JSON.stringify(result),
+    count: 1,
   };
 }
 

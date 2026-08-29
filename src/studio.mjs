@@ -32,9 +32,16 @@ export function run(cmd, args, { cwd, timeoutMs = 600000, input } = {}) {
   });
 }
 
-// Studio's spinners emit ANSI escapes that corrupt parsed output.
-function strip(s) {
-  return s.replace(/\[[0-9;?]*[A-Za-z]/g, '');
+// Studio's spinners emit ANSI escapes that corrupt parsed output, and its
+// tables wrap URLs in OSC-8 hyperlinks — ESC ] 8 ; ; <uri> BEL <text> ESC ] 8 ; ; BEL
+// — whose payload survives a CSI-only strip and lands in the middle of a
+// parsed field. Strip OSC first (it is terminated by BEL or ST, and stopping
+// at an embedded ESC keeps an unterminated sequence from eating the rest of
+// the output), then the CSI sequences exactly as before.
+export function strip(s) {
+  return s
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\[[0-9;?]*[A-Za-z]/g, '');
 }
 
 export async function assertStudioAvailable() {
@@ -90,8 +97,58 @@ export function wp(path, args) {
 }
 
 export async function deleteSite(path) {
+  // A stop failure is normal — an already-stopped site is the common case —
+  // so it is not load-bearing. The delete is: it is what deregisters the site
+  // from the Studio app.
   await run('studio', ['stop', '--path', path], { timeoutMs: 120000 });
+
   // `studio delete` has no --yes flag; it prompts. Feed it a confirmation.
-  await run('studio', ['delete', '--path', path], { timeoutMs: 120000, input: 'y\n' });
+  const del = await run('studio', ['delete', '--path', path], { timeoutMs: 120000, input: 'y\n' });
+  if (del.code !== 0) {
+    // Deliberately leave the directory in place. Startup cleanup keys off the
+    // directory existing, so removing it here would erase the only trace of a
+    // site that is still registered in Studio, pointing at a path that no
+    // longer exists, with no future run able to retry the delete.
+    throw new Error(
+      `studio delete failed for ${path}: ${(del.stderr || del.stdout).trim() || `exit ${del.code}`}. ` +
+      'The site directory was left in place so the next run can retry the delete; ' +
+      'the site may still be registered in the Studio app.',
+    );
+  }
+
   await rm(path, { recursive: true, force: true });
+}
+
+const WP_VERSION_RE = /^\d+(?:\.\d+){1,2}(?:-[0-9A-Za-z.]+(?:-[0-9A-Za-z.]+)*)?$/;
+
+// `wp core version` prints the version on its own line, but Studio may prefix
+// the output with daemon/spinner chatter, so take the last version-shaped
+// line rather than assuming the whole output is the version.
+export function parseWpVersion(stdout) {
+  const lines = String(stdout ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (WP_VERSION_RE.test(lines[i])) return lines[i];
+  }
+  return null;
+}
+
+// `--wp latest` is a valid value for `studio create` and meaningless
+// everywhere else: recorded in report.json and rendered into report.md it
+// reads as a version, and the skill copies it straight into a public plugin's
+// `Tested up to:` header, which would be an invalid wordpress.org header.
+// Ask the provisioned site what it actually is, and refuse to continue if the
+// answer is not version-shaped rather than carrying an unresolved value
+// downstream.
+export async function resolveWpVersion(path) {
+  const { code, stdout, stderr } = await wp(path, ['core', 'version']);
+  const version = code === 0 ? parseWpVersion(stdout) : null;
+  if (version) return version;
+
+  const output = `${stdout}\n${stderr}`.trim();
+  throw new Error(
+    'Could not resolve the WordPress version of the provisioned site: ' +
+    `\`wp core version\` returned ${JSON.stringify(output)}. Refusing to continue — ` +
+    'an unresolved version would be recorded in the report and written into ' +
+    'plugin readme headers.',
+  );
 }

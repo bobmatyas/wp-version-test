@@ -32,7 +32,13 @@ node bin/wp-compat.mjs baseline    # record existing Plugin Check findings
 
 `plugins.json` is gitignored — it's yours, not shared. `plugin-check-baseline.json`,
 written by the `baseline` step, is committed, so the whole team tests against
-the same noise floor.
+the same noise floor. Its keys use plugin-relative file paths, so it is
+portable across machines and checkout locations.
+
+`baseline` merges: it replaces only the slugs it actually re-measured, so
+`baseline --only one-plugin` leaves the rest of the file intact. If a
+configured plugin produces no Plugin Check output — a failed clone, say — it
+says so loudly rather than dropping the slug.
 
 The baseline step matters. Plugin Check reports pre-existing code-quality
 issues that have nothing to do with WordPress version compatibility. Skip the
@@ -54,8 +60,17 @@ Available WordPress versions: `nightly`, `7.1`, `7.0`, `6.9`, `6.8`, `6.7`,
 `6.6`, `6.5`, `6.4`, `6.3`, `6.2`. There's no `-beta`/`-RC` form — `nightly` is
 how you test against the upcoming release before it's tagged.
 
+`latest` and `nightly` are Studio's words, not WordPress version numbers. The
+CLI asks the provisioned site what it actually installed and records *that*, so
+`report.json`'s `wpVersion` is always a concrete version — which is what ends
+up in a plugin's `Tested up to:` header.
+
 Results land in `.work/report.json` (machine-readable, consumed by the skill)
 and `.work/report.md` (a readable summary, also printed to the console).
+Identical findings are grouped within a run and carry an occurrence count, so
+one root cause that logs 260 times is one line reading `× 260`, not 260 lines.
+File paths in the report are relative to the plugin (or, for WordPress core
+files, to the site root) — no local machine paths leak into an issue body.
 
 ## With Claude
 

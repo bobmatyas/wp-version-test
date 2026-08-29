@@ -157,7 +157,7 @@ test('escapes markdown special characters in messages and file paths', () => {
   // Verify the file path still appears in a code span (with backticks)
   assert.match(md, /`[^`]*test\.php:10[^`]*`/);
   // Verify that the slug appears in the table with backticks (code formatting)
-  assert.match(md, /\| `backtick\\|pipe` \|/);
+  assert.match(md, /\| `backtick\\\|pipe` \|/);
 });
 
 test('handles plugin check findings with code: null without crashing', () => {
@@ -240,12 +240,12 @@ test('renders slug with backtick and pipe in table without breaking structure', 
   };
   const md = renderMarkdown(reportWithBacktickPipeSlug);
   // Slug should have backtick transliterated to single quote and pipe escaped in the code span
-  assert.match(md, /\| `slug'with\\|chars` \|/);
+  assert.match(md, /\| `slug'with\\\|chars` \|/);
   // Should have all 5 expected column headers
   const headerMatch = md.match(/\| Plugin \| Status \| Blocking \| Advisory \| New Plugin Check errors \|/);
   assert.ok(headerMatch, 'Table should have correct headers');
   // Should find the status line in the correct column position (verify structure isn't broken)
-  assert.match(md, /\| `slug'with\\|chars` \| ✅ eligible \| 0 \| 0 \| 0 \|/);
+  assert.match(md, /\| `slug'with\\\|chars` \| ✅ eligible \| 0 \| 0 \| 0 \|/);
 });
 
 test('renders plugin with empty slug without empty backtick pair in table', () => {
@@ -313,4 +313,53 @@ test('includes plugin check findings in their own section', () => {
 test('reports failed smoke checks', () => {
   const md = renderMarkdown(report);
   assert.match(md, /HTTP 500/);
+});
+
+test('renders the occurrence count for a grouped finding', () => {
+  const grouped = {
+    ...report,
+    plugins: [
+      {
+        slug: 'noisy-plugin', repo: 'noisy-plugin', sha: 'abc1234', branch: null, runError: null,
+        blocking: [],
+        advisory: [
+          {
+            slug: 'noisy-plugin', severity: 'advisory', kind: 'warning', attribution: 'direct',
+            message: 'Trying to access array offset on null',
+            file: 'includes/settings.php', line: 42, raw: 'x', count: 260,
+          },
+          {
+            slug: 'noisy-plugin', severity: 'advisory', kind: 'warning', attribution: 'direct',
+            message: 'A one-off problem', file: 'includes/other.php', line: 7, raw: 'x', count: 1,
+          },
+        ],
+        smoke: [],
+        pluginCheck: { available: true, newErrors: [] },
+        bumpEligible: true,
+      },
+    ],
+  };
+  const md = renderMarkdown(grouped);
+  assert.match(md, /Trying to access array offset on null — `includes\/settings\.php:42` × 260/);
+  // A single occurrence must not be annotated at all.
+  assert.match(md, /A one-off problem — `includes\/other\.php:7`\n/);
+  assert.ok(!/A one-off problem[^\n]*× 1/.test(md), 'count 1 must not be rendered');
+});
+
+test('renders a finding with no count (legacy shape) without an occurrence marker', () => {
+  const legacy = {
+    ...report,
+    plugins: [
+      {
+        slug: 'p', repo: 'p', sha: 'abc1234', branch: null, runError: null,
+        blocking: [],
+        advisory: [{
+          slug: 'p', severity: 'advisory', kind: 'notice', attribution: 'direct',
+          message: 'No count field', file: 'a.php', line: 1, raw: 'x',
+        }],
+        smoke: [], pluginCheck: { available: true, newErrors: [] }, bumpEligible: true,
+      },
+    ],
+  };
+  assert.ok(!renderMarkdown(legacy).includes('×'));
 });

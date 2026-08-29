@@ -102,3 +102,82 @@ test('activation and smoke failures are blocking', () => {
   assert.equal(s.kind, 'smoke');
   assert.match(s.message, /HTTP 500/);
 });
+
+test('groups repeated findings within a run and counts the occurrences', () => {
+  // The real run logged one root cause 260 times at one line. That must reduce
+  // to a single finding carrying the tally, not 260 report entries.
+  const repeated = Array.from({ length: 260 }, (_, i) => entry({
+    level: 'Warning',
+    message: 'Trying to access array offset on null',
+    file: '/repos/my-plugin/includes/settings.php',
+    line: 42,
+    timestamp: `29-Aug-2026 12:41:${String(i % 60).padStart(2, '0')} UTC`,
+  }));
+  const other = entry({ level: 'Warning', message: 'A different problem' });
+
+  const findings = classifyEntries([...repeated, other], {
+    slug: 'my-plugin', repoDir: '/repos/my-plugin', siteDir: '/site',
+  });
+
+  assert.equal(findings.length, 2);
+  assert.equal(findings[0].count, 260);
+  assert.equal(findings[0].message, 'Trying to access array offset on null');
+  assert.equal(findings[1].count, 1);
+});
+
+test('the grouped finding keeps the first occurrence as its representative', () => {
+  const findings = classifyEntries(
+    [
+      entry({ level: 'Warning', message: 'Same', file: '/repos/p/a.php', line: 10 }),
+      entry({ level: 'Warning', message: 'Same', file: '/repos/p/a.php', line: 99 }),
+    ],
+    { slug: 'p', repoDir: '/repos/p', siteDir: '/site' },
+  );
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].line, 10);
+  assert.equal(findings[0].count, 2);
+});
+
+test('a single occurrence still reports count 1', () => {
+  const findings = classifyEntries([entry()], { slug: 'p', repoDir: '/repos/p', siteDir: '/site' });
+  assert.equal(findings[0].count, 1);
+});
+
+test('a finding inside the clone is reported with a plugin-relative path', () => {
+  const findings = classifyEntries(
+    [entry({ file: '/Users/me/.work/repos/my-plugin/includes/settings.php' })],
+    {
+      slug: 'my-plugin',
+      repoDir: '/Users/me/.work/repos/my-plugin',
+      pluginDir: '/Users/me/.work/site/wp-content/plugins/my-plugin',
+      siteDir: '/Users/me/.work/site',
+    },
+  );
+  assert.equal(findings[0].file, 'includes/settings.php');
+  assert.equal(findings[0].attribution, 'direct');
+});
+
+test('a core file stays identifiable and keeps its indirect attribution', () => {
+  const findings = classifyEntries(
+    [entry({ file: '/Users/me/.work/site/wp-includes/functions.php' })],
+    {
+      slug: 'my-plugin',
+      repoDir: '/Users/me/.work/repos/my-plugin',
+      siteDir: '/Users/me/.work/site',
+    },
+  );
+  assert.equal(findings[0].file, 'wp-includes/functions.php');
+  assert.equal(findings[0].attribution, 'indirect');
+});
+
+test('the raw log text carries no machine-local path either', () => {
+  const findings = classifyEntries(
+    [entry({
+      file: '/Users/me/.work/repos/my-plugin/a.php',
+      raw: '[29-Aug-2026] PHP Warning: boom in /Users/me/.work/repos/my-plugin/a.php on line 3',
+    })],
+    { slug: 'my-plugin', repoDir: '/Users/me/.work/repos/my-plugin', siteDir: '/Users/me/.work/site' },
+  );
+  assert.ok(!findings[0].raw.includes('/Users/'), findings[0].raw);
+  assert.match(findings[0].raw, /boom in a\.php on line 3/);
+});

@@ -100,7 +100,10 @@ function renderFindings(title, findings) {
       ? ' _(indirect — the file path is not this plugin\'s; attributed because it was the only plugin active)_'
       : '';
     const safeMessage = safeText(f.message);
-    out.push(`- **${f.kind}** ${safeMessage}${where}${attribution}`);
+    // One root cause can log thousands of times; classifyEntries groups them
+    // and keeps the tally, so surface it instead of implying one occurrence.
+    const times = f.count > 1 ? ` × ${f.count}` : '';
+    out.push(`- **${f.kind}** ${safeMessage}${where}${times}${attribution}`);
   }
   out.push('');
   return out.join('\n');

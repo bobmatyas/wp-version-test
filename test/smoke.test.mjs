@@ -253,3 +253,30 @@ test('does not throw on unparseable URL', async () => {
   assert.equal(r.ok, true);
   assert.equal(r.reason, null);
 });
+
+test('skips menu slugs that are external URLs', () => {
+  // "Docs"/"Upgrade" menu items register a full URL as their slug. Turning
+  // that into /wp-admin/admin.php?page=https%3A%2F%2F… gets a wp_die(), which
+  // would be recorded as a blocking failure and stop a legitimate bump.
+  const urls = buildSmokeUrls('http://localhost:8884', {
+    menuSlugs: [
+      'https://example.com/docs',
+      'http://example.com/upgrade',
+      'HTTPS://Example.com/pricing',
+      'my-plugin-settings',
+    ],
+    token: 'abc123',
+  });
+  assert.ok(!urls.some((u) => u.includes('example.com')), urls.join('\n'));
+  assert.ok(!urls.some((u) => u.includes('https%3A')), urls.join('\n'));
+  assert.ok(urls.some((u) => u.includes('page=my-plugin-settings')));
+  assert.equal(urls.length, 4); // home, /wp-admin/, plugins.php, the one real slug
+});
+
+test('does not mistake a local slug that merely contains "http" for a URL', () => {
+  const urls = buildSmokeUrls('http://localhost:8884', {
+    menuSlugs: ['my-http-settings'],
+    token: 'abc123',
+  });
+  assert.ok(urls.some((u) => u.includes('page=my-http-settings')));
+});
