@@ -11,7 +11,7 @@ export function renderMarkdown(report) {
   lines.push('|---|---|---|---|---|');
   for (const p of report.plugins) {
     const status = p.runError ? '⚠️ run error' : p.bumpEligible ? '✅ eligible' : '❌ blocked';
-    const safeSlug = escapeMarkdown(p.slug);
+    const safeSlug = codeSpan(p.slug);
     lines.push(
       `| \`${safeSlug}\` | ${status} | ${p.blocking.length} | ${p.advisory.length} | ` +
       `${p.pluginCheck.available ? p.pluginCheck.newErrors.length : 'n/a'} |`,
@@ -54,8 +54,8 @@ export function renderMarkdown(report) {
     } else {
       for (const f of p.pluginCheck.newErrors) {
         const docs = f.docs ? ` ([docs](${f.docs}))` : '';
-        const safeCode = escapeMarkdown(f.code);
-        const safeMessage = escapeMarkdown(f.message);
+        const safeCode = codeSpan(f.code);
+        const safeMessage = safeText(f.message);
         const location = formatLocation(f.filePath, f.line);
         const locationPart = location ? ` — \`${location}\`` : '';
         lines.push(`- \`${safeCode}\` — ${safeMessage}${locationPart}${docs}`);
@@ -67,13 +67,24 @@ export function renderMarkdown(report) {
   return lines.join('\n');
 }
 
-function escapeMarkdown(str) {
-  return str.replace(/[`|]/g, '\\$&').replace(/\n/g, ' ');
+function safeText(value) {
+  if (value == null || typeof value !== 'string') return '';
+  return value.replace(/\n/g, ' ').replace(/[`|]/g, '\\$&');
+}
+
+function codeSpan(value) {
+  if (value == null || typeof value !== 'string') return '';
+  const trimmed = value
+    .replace(/\n/g, ' ')
+    .replace(/`/g, "'")
+    .replace(/\|/g, '\\|');
+  return trimmed;
 }
 
 function formatLocation(filePath, line) {
-  if (!filePath) return '';
-  return `${escapeMarkdown(filePath)}${line ? `:${line}` : ''}`;
+  const safePath = codeSpan(filePath);
+  if (!safePath) return '';
+  return `${safePath}${line ? `:${line}` : ''}`;
 }
 
 function renderFindings(title, findings) {
@@ -86,7 +97,7 @@ function renderFindings(title, findings) {
     const attribution = f.attribution === 'indirect'
       ? ' _(indirect — the file path is not this plugin\'s; attributed because it was the only plugin active)_'
       : '';
-    const safeMessage = escapeMarkdown(f.message);
+    const safeMessage = safeText(f.message);
     out.push(`- **${f.kind}** ${safeMessage}${where}${attribution}`);
   }
   out.push('');

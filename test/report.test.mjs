@@ -160,6 +160,113 @@ test('escapes markdown special characters in messages and file paths', () => {
   assert.match(md, /\| `backtick\\|pipe` \|/);
 });
 
+test('handles plugin check findings with code: null without crashing', () => {
+  const reportWithNullCode = {
+    ...report,
+    plugins: [
+      {
+        slug: 'null-code-plugin', repo: 'null-code-plugin', sha: 'abc1234', branch: null, runError: null,
+        blocking: [],
+        advisory: [],
+        smoke: [],
+        pluginCheck: {
+          available: true,
+          newErrors: [
+            { code: null, findingType: 'ERROR', severity: 9, filePath: 'a.php', line: 10, message: 'Error with null code', docs: null },
+            { code: 'Real.Code', findingType: 'ERROR', severity: 9, filePath: 'b.php', line: 5, message: 'Normal error', docs: null },
+          ],
+        },
+        bumpEligible: true,
+      },
+    ],
+  };
+  // This should not throw
+  const md = renderMarkdown(reportWithNullCode);
+  // Should not contain literal "null" as a code
+  assert.doesNotMatch(md, /\| `null` —/);
+  assert.match(md, /Error with null code/);
+  assert.match(md, /Real\.Code/);
+  assert.match(md, /Normal error/);
+});
+
+test('renders finding with backtick in file path as well-formed code span', () => {
+  const reportWithBacktickInPath = {
+    ...report,
+    plugins: [
+      {
+        slug: 'weird-path-plugin', repo: 'weird-path-plugin', sha: 'abc1234', branch: null, runError: null,
+        blocking: [
+          { slug: 'weird-path-plugin', severity: 'blocking', kind: 'fatal', attribution: 'direct', message: 'Error in weird file', file: '/repos/weird-path-plugin/file`with`backticks.php', line: 42, raw: '' },
+        ],
+        advisory: [],
+        smoke: [],
+        pluginCheck: { available: true, newErrors: [] },
+        bumpEligible: false,
+      },
+    ],
+  };
+  const md = renderMarkdown(reportWithBacktickInPath);
+  // File path should be rendered with backticks transliterated to single quotes
+  assert.match(md, /file'with'backticks\.php:42/);
+  // Should have exactly one well-formed code span around the location
+  const findingLine = md.match(/— `[^`]+`$/m);
+  assert.ok(findingLine, 'Location should be in a single code span');
+  // Should not have stray backslashes before backticks
+  assert.doesNotMatch(md, /\\`/);
+});
+
+test('renders slug with backtick and pipe in table without breaking structure', () => {
+  const reportWithBacktickPipeSlug = {
+    ...report,
+    plugins: [
+      {
+        slug: 'slug`with|chars', repo: 'slug`with|chars', sha: 'abc1234', branch: null, runError: null,
+        blocking: [],
+        advisory: [],
+        smoke: [],
+        pluginCheck: { available: true, newErrors: [] },
+        bumpEligible: true,
+      },
+    ],
+  };
+  const md = renderMarkdown(reportWithBacktickPipeSlug);
+  // Slug should have backtick transliterated to single quote and pipe escaped in the code span
+  assert.match(md, /\| `slug'with\\|chars` \|/);
+  // Should have all 5 expected column headers
+  const headerMatch = md.match(/\| Plugin \| Status \| Blocking \| Advisory \| New Plugin Check errors \|/);
+  assert.ok(headerMatch, 'Table should have correct headers');
+  // Should find the status line in the correct column position (verify structure isn't broken)
+  assert.match(md, /\| `slug'with\\|chars` \| ✅ eligible \| 0 \| 0 \| 0 \|/);
+});
+
+test('renders plugin check code with backtick as well-formed code span', () => {
+  const reportWithBacktickInCode = {
+    ...report,
+    plugins: [
+      {
+        slug: 'code-backtick-plugin', repo: 'code-backtick-plugin', sha: 'abc1234', branch: null, runError: null,
+        blocking: [],
+        advisory: [],
+        smoke: [],
+        pluginCheck: {
+          available: true,
+          newErrors: [
+            { code: 'Rule`With`Backticks', findingType: 'ERROR', severity: 9, filePath: 'test.php', line: 10, message: 'Error in backtick code', docs: null },
+          ],
+        },
+        bumpEligible: true,
+      },
+    ],
+  };
+  const md = renderMarkdown(reportWithBacktickInCode);
+  // Code should have backticks transliterated to single quotes, within code span
+  assert.match(md, /`Rule'With'Backticks`/);
+  // Should not have stray backslashes before backticks (backslash escaping should not be used in code spans)
+  assert.doesNotMatch(md, /\\`/);
+  // The entire line should be well-formed: - `code` — message — `location`
+  assert.match(md, /- `Rule'With'Backticks` — Error in backtick code — `test\.php:10`/);
+});
+
 test('includes plugin check findings in their own section', () => {
   const md = renderMarkdown(report);
   assert.match(md, /Plugin Check/i);
