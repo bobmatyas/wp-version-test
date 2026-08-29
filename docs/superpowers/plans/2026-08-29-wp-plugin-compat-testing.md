@@ -1355,11 +1355,13 @@ export async function assertStudioAvailable() {
 export async function availableWpVersions() {
   // studio create validates the version before touching the path, and reports
   // the valid list on failure. The path must still be creatable, so use a temp
-  // dir rather than an invalid path.
+  // dir rather than an invalid path. The probe version must be WELL-FORMED but
+  // nonexistent: yargs rejects malformed values (e.g. "0.0.0-invalid", "0.0.0")
+  // before Studio ever runs its availability check, and nothing is printed.
   const probePath = join(tmpdir(), `wp-compat-version-probe-${process.pid}`);
   const { stdout, stderr } = await run(
     'studio',
-    ['create', '--path', probePath, '--wp', '0.0.0-invalid', '--start=false'],
+    ['create', '--path', probePath, '--wp', '999.999.999', '--start=false'],
     { timeoutMs: 120000 },
   );
   await rm(probePath, { recursive: true, force: true });
