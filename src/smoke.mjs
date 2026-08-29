@@ -3,8 +3,8 @@ export function hasFatalSignature(body) {
   if (/<b>\s*(Fatal error|Parse error)\s*<\/b>/i.test(body)) {
     return true;
   }
-  // Match WordPress critical error page
-  if (body.includes('There has been a critical error on this website')) {
+  // Match WordPress critical error page (case-insensitive)
+  if (/there has been a critical error on this website/i.test(body)) {
     return true;
   }
   return false;
@@ -40,9 +40,11 @@ export async function checkUrl(url, { fetchImpl = fetch, timeoutMs = 10000 } = {
   try {
     const res = await fetchImpl(url, { signal: controller.signal, redirect: 'follow' });
 
-    // Detect redirect to login page: auth token failed
-    if (res.redirected && res.url && res.url.includes('wp-login.php')) {
-      return { url, status: res.status, ok: false, reason: `Redirected to login (${res.url}) — the harness token did not authenticate` };
+    // Detect redirect away from /wp-admin/ when requested to stay in /wp-admin/
+    if (url.includes('/wp-admin/') && res.redirected && res.url && !res.url.includes('/wp-admin/')) {
+      const isLoginPage = res.url.includes('wp-login.php') || res.url.includes('login');
+      const authMsg = isLoginPage ? ' — the harness token did not authenticate' : '';
+      return { url, status: res.status, ok: false, reason: `Redirected from ${url} to ${res.url}${authMsg}` };
     }
 
     const body = await res.text();

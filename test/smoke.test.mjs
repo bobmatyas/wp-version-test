@@ -12,8 +12,10 @@ test('detects PHP fatal signatures in a response body', () => {
   // PHP HTML-wrapped errors (when html_errors=on)
   assert.equal(hasFatalSignature('<b>Fatal error</b>: Uncaught Error'), true);
   assert.equal(hasFatalSignature('<b>Parse error</b>: syntax error'), true);
-  // WordPress critical error page
+  // WordPress critical error page (case-insensitive)
   assert.equal(hasFatalSignature('There has been a critical error on this website'), true);
+  assert.equal(hasFatalSignature('there has been a critical error on this website'), true);
+  assert.equal(hasFatalSignature('THERE HAS BEEN A CRITICAL ERROR ON THIS WEBSITE'), true);
   // Should not match bare phrases (false positives)
   assert.equal(hasFatalSignature('Fatal error: Uncaught Exception'), false);
   assert.equal(hasFatalSignature('Parse error: unexpected delimiter'), false);
@@ -103,8 +105,9 @@ test('fails on redirect to wp-login.php (authentication failure)', async () => {
     }),
   });
   assert.equal(r.ok, false);
-  assert.match(r.reason, /Redirected to login/);
+  assert.match(r.reason, /Redirected/);
   assert.match(r.reason, /wp-login.php/);
+  assert.match(r.reason, /harness token/);
 });
 
 test('passes a benign redirect (e.g., trailing slash)', async () => {
@@ -136,4 +139,47 @@ test('fails on timeout with no pending timer', async () => {
   assert.equal(r.ok, false);
   assert.match(r.reason, /Timed out/);
   // The test suite will detect any pending timers after this test runs
+});
+
+test('fails on admin URL redirected to site root (auth failure)', async () => {
+  const r = await checkUrl('http://x/wp-admin/options-general.php', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/',
+      text: async () => '<html>homepage</html>',
+    }),
+  });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Redirected/);
+  assert.match(r.reason, /options-general.php/);
+});
+
+test('passes admin URL redirected to different admin page (within /wp-admin/)', async () => {
+  const r = await checkUrl('http://x/wp-admin/plugins.php', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/wp-admin/plugin-install.php',
+      text: async () => '<html>plugins</html>',
+    }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, null);
+});
+
+test('passes front-page URL redirected off /wp-admin/', async () => {
+  const r = await checkUrl('http://x/', {
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/new-homepage/',
+      text: async () => '<html>new home</html>',
+    }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, null);
 });
