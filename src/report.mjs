@@ -12,8 +12,9 @@ export function renderMarkdown(report) {
   for (const p of report.plugins) {
     const status = p.runError ? '⚠️ run error' : p.bumpEligible ? '✅ eligible' : '❌ blocked';
     const safeSlug = codeSpan(p.slug);
+    const slugCell = safeSlug ? `\`${safeSlug}\`` : '';
     lines.push(
-      `| \`${safeSlug}\` | ${status} | ${p.blocking.length} | ${p.advisory.length} | ` +
+      `| ${slugCell} | ${status} | ${p.blocking.length} | ${p.advisory.length} | ` +
       `${p.pluginCheck.available ? p.pluginCheck.newErrors.length : 'n/a'} |`,
     );
   }
@@ -58,7 +59,8 @@ export function renderMarkdown(report) {
         const safeMessage = safeText(f.message);
         const location = formatLocation(f.filePath, f.line);
         const locationPart = location ? ` — \`${location}\`` : '';
-        lines.push(`- \`${safeCode}\` — ${safeMessage}${locationPart}${docs}`);
+        const codePart = safeCode ? `\`${safeCode}\` — ` : '';
+        lines.push(`- ${codePart}${safeMessage}${locationPart}${docs}`);
       }
     }
     lines.push('');

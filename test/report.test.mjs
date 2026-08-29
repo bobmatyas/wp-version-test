@@ -180,13 +180,22 @@ test('handles plugin check findings with code: null without crashing', () => {
       },
     ],
   };
-  // This should not throw
   const md = renderMarkdown(reportWithNullCode);
+  // Should not contain empty backtick pair
+  assert.doesNotMatch(md, /- `` —/);
   // Should not contain literal "null" as a code
-  assert.doesNotMatch(md, /\| `null` —/);
-  assert.match(md, /Error with null code/);
-  assert.match(md, /Real\.Code/);
-  assert.match(md, /Normal error/);
+  assert.doesNotMatch(md, /`null`/);
+  // Should have correct content without empty backticks
+  assert.match(md, /- Error with null code — `a\.php:10`/);
+  assert.match(md, /- `Real\.Code` — Normal error — `b\.php:5`/);
+  // Verify balanced backticks in the Plugin Check section (each code span should have 2 backticks)
+  const pluginCheckSection = md.match(/### Plugin Check\n([\s\S]*?)(?=\n###|$)/);
+  const lines = pluginCheckSection[1].split('\n').filter(line => line.startsWith('-'));
+  lines.forEach(line => {
+    const backtickCount = (line.match(/`/g) || []).length;
+    // Should be even (balanced) - either 0 for no code, or 2 for one code span, plus 2 for location
+    assert.ok(backtickCount % 2 === 0, `Line should have balanced backticks: ${line}`);
+  });
 });
 
 test('renders finding with backtick in file path as well-formed code span', () => {
@@ -237,6 +246,34 @@ test('renders slug with backtick and pipe in table without breaking structure', 
   assert.ok(headerMatch, 'Table should have correct headers');
   // Should find the status line in the correct column position (verify structure isn't broken)
   assert.match(md, /\| `slug'with\\|chars` \| ✅ eligible \| 0 \| 0 \| 0 \|/);
+});
+
+test('renders plugin with empty slug without empty backtick pair in table', () => {
+  const reportWithEmptySlug = {
+    ...report,
+    plugins: [
+      {
+        slug: '', repo: 'empty-slug', sha: 'abc1234', branch: null, runError: null,
+        blocking: [],
+        advisory: [],
+        smoke: [],
+        pluginCheck: { available: true, newErrors: [] },
+        bumpEligible: true,
+      },
+    ],
+  };
+  const md = renderMarkdown(reportWithEmptySlug);
+  // Should not have empty backtick pair in table
+  assert.doesNotMatch(md, /\| `` \|/);
+  // Should have all 5 expected column headers
+  const headerMatch = md.match(/\| Plugin \| Status \| Blocking \| Advisory \| New Plugin Check errors \|/);
+  assert.ok(headerMatch, 'Table should have correct headers');
+  // Should find the status line with no backticks around empty slug
+  assert.match(md, /\|  \| ✅ eligible \| 0 \| 0 \| 0 \|/);
+  // Count pipes in data row - should be exactly 6 (5 columns)
+  const dataRow = md.match(/\|  \| ✅ eligible \| 0 \| 0 \| 0 \|/);
+  const pipeCount = (dataRow[0].match(/\|/g) || []).length;
+  assert.equal(pipeCount, 6, 'Table row should have exactly 6 pipes for 5 columns');
 });
 
 test('renders plugin check code with backtick as well-formed code span', () => {
