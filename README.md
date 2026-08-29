@@ -1,0 +1,131 @@
+# wp-version-test
+
+Test the WordPress plugins you maintain against a WordPress version. Provisions
+a disposable [WordPress Studio](https://developer.wordpress.com/studio/) site,
+activates each plugin in isolation, diffs `debug.log` against a baseline, runs
+[Plugin Check](https://github.com/WordPress/plugin-check), and reports what
+broke.
+
+The CLI only ever reads and reports — it never touches GitHub. Opening issues
+and version-bump PRs is handled separately, by the companion Claude skill, and
+only after you confirm each write.
+
+## Requirements
+
+- [WordPress Studio](https://developer.wordpress.com/studio/), with the CLI
+  enabled: in the Studio desktop app, go to Settings → General → Studio CLI for
+  terminal and turn the toggle on, then open a new terminal
+- Node 22+
+- `git`
+- [`gh`](https://cli.github.com/), authenticated — only needed if you want the
+  skill to open issues or pull requests; the CLI itself never calls it
+
+No `npm install`. There are no runtime dependencies.
+
+## Setup
+
+```bash
+cp plugins.example.json plugins.json
+# edit plugins.json: your GitHub owner and the plugins you maintain
+node bin/wp-compat.mjs baseline    # record existing Plugin Check findings
+```
+
+`plugins.json` is gitignored — it's yours, not shared. `plugin-check-baseline.json`,
+written by the `baseline` step, is committed, so the whole team tests against
+the same noise floor.
+
+The baseline step matters. Plugin Check reports pre-existing code-quality
+issues that have nothing to do with WordPress version compatibility. Skip the
+baseline and your first `run` dumps every one of those as if it were new — a
+backlog dump, not a compatibility report. With a baseline in place, `run` shows
+only what Plugin Check newly finds.
+
+## Usage
+
+```bash
+node bin/wp-compat.mjs run                    # latest stable
+node bin/wp-compat.mjs run --wp nightly       # upcoming release
+node bin/wp-compat.mjs run --wp 6.9           # a specific version
+node bin/wp-compat.mjs run --only my-plugin   # one plugin
+node bin/wp-compat.mjs run --keep-site        # leave the Studio site up to inspect
+```
+
+Available WordPress versions: `nightly`, `7.1`, `7.0`, `6.9`, `6.8`, `6.7`,
+`6.6`, `6.5`, `6.4`, `6.3`, `6.2`. There's no `-beta`/`-RC` form — `nightly` is
+how you test against the upcoming release before it's tagged.
+
+Results land in `.work/report.json` (machine-readable, consumed by the skill)
+and `.work/report.md` (a readable summary, also printed to the console).
+
+## With Claude
+
+Copy `skills/wp-compat-test/` into `.claude/skills/` (or your user skills
+directory) and ask Claude to test your plugins. The skill runs the CLI,
+triages the findings, and proposes GitHub issues and version-bump PRs —
+**asking before every single write.** One approval covers one issue or one PR,
+nothing more.
+
+## Configuration
+
+```json
+{
+  "owner": "your-github-username",
+  "phpVersion": "8.4",
+  "plugins": [
+    {
+      "slug": "my-plugin",
+      "repo": "my-plugin",
+      "branch": "trunk",
+      "ignoreCodes": ["WordPress.Security.NonceVerification.Recommended"],
+      "adminPaths": ["/wp-admin/edit.php?post_type=thing"]
+    }
+  ]
+}
+```
+
+Only `slug` is required per plugin; `repo` defaults to the slug, and `branch`
+defaults to the repo's default branch.
+
+- `ignoreCodes` — Plugin Check codes to silence permanently for this plugin
+- `adminPaths` — extra admin URLs to smoke-test, beyond the auto-discovered ones
+
+## How it works
+
+1. Provisions a Studio site on the target WordPress version, with
+   `--file-access all-files` so symlinked plugins load
+2. Captures a **baseline** `debug.log` with no plugins active — the noise
+   floor for this run
+3. For each plugin, one at a time: clone, symlink into place, activate,
+   smoke-test, snapshot the log, run Plugin Check, deactivate
+4. Reports only what is new relative to the baseline
+
+**Why one plugin at a time?** WordPress logs a deprecation or warning against
+*core's* file path — the code that actually calls the deprecated function —
+not the plugin that triggered it. Looking at the log alone, you cannot tell
+which active plugin is responsible; file paths point at WordPress core
+regardless of the cause. Testing one plugin per site gives you the only
+reliable signal: whatever is new in the log while exactly one plugin is active
+is attributed to that plugin. Findings whose logged path genuinely is inside
+the plugin's own directory are labelled `direct`; findings attributed only by
+this process of elimination — where the path points at core — are labelled
+`indirect`, so you know that path is a red herring rather than the actual
+location of the problem.
+
+## What blocks a version bump
+
+Only **blocking** compat findings — fatals, parse errors, failed activation,
+and failed smoke checks — make a plugin ineligible for a version bump.
+Advisory findings (warnings, deprecations) and Plugin Check findings never
+block a bump: Plugin Check reports code-quality issues that exist regardless
+of WordPress version, and advisories are worth reading but don't mean the
+plugin is broken on the tested version.
+
+## Testing this tool
+
+```bash
+npm test
+```
+
+runs `node --test "test/**/*.test.mjs"`. Quote the glob — the bare
+`node --test test/` form doesn't glob `*.test.mjs` files; it tries to resolve
+`test/` as a module path and fails.
