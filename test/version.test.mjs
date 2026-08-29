@@ -111,3 +111,88 @@ test('skips the constant update when nothing matches', () => {
   assert.equal(r.text, PLUGIN_PHP);
   assert.match(r.reason, /constant/);
 });
+
+test('rejects updateReadmeTestedUpTo when the header field is missing even if changelog mentions it', () => {
+  const readmeWithoutHeader = `=== My Plugin ===
+Stable tag: 3.1.4
+
+== Description ==
+Does things.
+
+== Changelog ==
+
+= 3.1.4 =
+Tested up to: 6.5 originally, now retested.
+`;
+  const r = updateReadmeTestedUpTo(readmeWithoutHeader, '7.1');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, readmeWithoutHeader);
+  assert.match(r.reason, /Tested up to/);
+});
+
+test('updates only the header Tested up to field when both header and changelog mention it', () => {
+  const readmeWithBoth = `=== My Plugin ===
+Tested up to: 6.8
+Stable tag: 3.1.4
+
+== Description ==
+Does things.
+
+== Changelog ==
+
+= 3.1.4 =
+Tested up to: 6.5 originally.
+`;
+  const r = updateReadmeTestedUpTo(readmeWithBoth, '7.1');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /^Tested up to: 7\.1$/m);
+  assert.match(r.text, /Tested up to: 6\.5 originally\./);
+});
+
+test('rejects updateReadmeStableTag when the header field is missing even if changelog mentions it', () => {
+  const readmeWithoutTag = `=== My Plugin ===
+Tested up to: 6.8
+
+== Description ==
+Does things.
+
+== Changelog ==
+
+= 3.1.4 =
+Stable tag: 3.1.3 older version.
+`;
+  const r = updateReadmeStableTag(readmeWithoutTag, '3.1.5');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, readmeWithoutTag);
+  assert.match(r.reason, /Stable tag/);
+});
+
+test('rejects updateVersionConstant when multiple distinct constants match the old version', () => {
+  const phpWithAmbiguity = `<?php
+define( 'MY_PLUGIN_VERSION', '3.1.4' );
+define( 'OTHER_PLUGIN_VERSION', '3.1.4' );
+`;
+  const r = updateVersionConstant(phpWithAmbiguity, '3.1.4', '3.1.5');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, phpWithAmbiguity);
+  assert.match(r.reason, /Ambiguous.*constant/i);
+});
+
+test('updates a single version constant when the old version is unambiguous', () => {
+  const php = `<?php
+define( 'MY_PLUGIN_VERSION', '3.1.4' );
+define( 'OTHER_PLUGIN_VERSION', '3.1.3' );
+`;
+  const r = updateVersionConstant(php, '3.1.4', '3.1.5');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /MY_PLUGIN_VERSION', '3\.1\.5'/);
+  assert.match(r.text, /OTHER_PLUGIN_VERSION', '3\.1\.3'/);
+});
+
+test('rejects insertMarkdownChangelog when no ## heading exists', () => {
+  const md = '# Changelog\n\nNo entries yet.\n';
+  const r = insertMarkdownChangelog(md, '1.0.0', '6.8');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, md);
+  assert.match(r.reason, /##/);
+});
