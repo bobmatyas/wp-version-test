@@ -1,0 +1,113 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  bumpPatch, readPluginHeaderVersion, updatePluginHeaderVersion,
+  updateReadmeTestedUpTo, updateReadmeStableTag, insertReadmeChangelog,
+  insertMarkdownChangelog, updateVersionConstant,
+} from '../src/version.mjs';
+
+const PLUGIN_PHP = `<?php
+/**
+ * Plugin Name: My Plugin
+ * Version: 3.1.4
+ * License: GPLv2 or later
+ */
+define( 'MY_PLUGIN_VERSION', '3.1.4' );
+`;
+
+const README = `=== My Plugin ===
+Tested up to: 6.8
+Stable tag: 3.1.4
+
+== Description ==
+Does things.
+
+== Changelog ==
+
+= 3.1.4 =
+* Earlier release.
+`;
+
+test('bumpPatch increments the patch component', () => {
+  assert.equal(bumpPatch('3.1.4'), '3.1.5');
+  assert.equal(bumpPatch('0.0.9'), '0.0.10');
+});
+
+test('bumpPatch refuses non-semver versions', () => {
+  assert.throws(() => bumpPatch('3.1'), /not semver/);
+  assert.throws(() => bumpPatch('1.2.3-beta'), /not semver/);
+});
+
+test('reads the plugin header version', () => {
+  assert.equal(readPluginHeaderVersion(PLUGIN_PHP), '3.1.4');
+  assert.equal(readPluginHeaderVersion('<?php // nothing'), null);
+});
+
+test('updates the plugin header version', () => {
+  const r = updatePluginHeaderVersion(PLUGIN_PHP, '3.1.5');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /\* Version: 3\.1\.5/);
+});
+
+test('skips the header update when no Version line exists', () => {
+  const r = updatePluginHeaderVersion('<?php // nothing', '3.1.5');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, '<?php // nothing');
+  assert.match(r.reason, /Version:/);
+});
+
+test('updates Tested up to and Stable tag', () => {
+  const tested = updateReadmeTestedUpTo(README, '7.1');
+  assert.equal(tested.changed, true);
+  assert.match(tested.text, /^Tested up to: 7\.1$/m);
+
+  const stable = updateReadmeStableTag(README, '3.1.5');
+  assert.equal(stable.changed, true);
+  assert.match(stable.text, /^Stable tag: 3\.1\.5$/m);
+});
+
+test('skips readme edits when the fields are absent', () => {
+  const tested = updateReadmeTestedUpTo('=== X ===\n', '7.1');
+  assert.equal(tested.changed, false);
+  assert.match(tested.reason, /Tested up to/);
+
+  const stable = updateReadmeStableTag('=== X ===\n', '3.1.5');
+  assert.equal(stable.changed, false);
+  assert.match(stable.reason, /Stable tag/);
+});
+
+test('inserts a changelog entry directly under the Changelog heading', () => {
+  const r = insertReadmeChangelog(README, '3.1.5', '7.1');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /== Changelog ==\n\n= 3\.1\.5 =\n\* Tested up to WordPress 7\.1\.\n/);
+  // the previous entry must survive, below the new one
+  const newIdx = r.text.indexOf('= 3.1.5 =');
+  const oldIdx = r.text.indexOf('= 3.1.4 =');
+  assert.ok(newIdx < oldIdx);
+});
+
+test('skips the changelog insert when there is no Changelog section', () => {
+  const r = insertReadmeChangelog('=== X ===\nTested up to: 6.8\n', '3.1.5', '7.1');
+  assert.equal(r.changed, false);
+  assert.match(r.reason, /Changelog/);
+});
+
+test('inserts a markdown changelog entry above the first heading', () => {
+  const md = '# Changelog\n\n## 3.1.4\n\n* Earlier.\n';
+  const r = insertMarkdownChangelog(md, '3.1.5', '7.1');
+  assert.equal(r.changed, true);
+  assert.ok(r.text.indexOf('## 3.1.5') < r.text.indexOf('## 3.1.4'));
+});
+
+test('updates a version constant matching the old version', () => {
+  const r = updateVersionConstant(PLUGIN_PHP, '3.1.4', '3.1.5');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /MY_PLUGIN_VERSION', '3\.1\.5'/);
+});
+
+test('skips the constant update when nothing matches', () => {
+  const r = updateVersionConstant(PLUGIN_PHP, '9.9.9', '10.0.0');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, PLUGIN_PHP);
+  assert.match(r.reason, /constant/);
+});
