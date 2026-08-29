@@ -1,0 +1,6 @@
+[29-Aug-2026 12:45:01 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function my_missing_fn() in /Users/x/repos/my-plugin/inc/thing.php:42
+Stack trace:
+#0 /Users/x/site/wp-includes/class-wp-hook.php(324): my_plugin_init('')
+#1 /Users/x/site/wp-settings.php(704): do_action('init')
+#2 {main}
+  thrown in /Users/x/repos/my-plugin/inc/thing.php on line 42
