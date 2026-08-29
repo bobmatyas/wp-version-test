@@ -41,9 +41,22 @@ test('keeps a multi-line stack trace in a single entry', () => {
   assert.match(entries[0].message, /^Uncaught Error: Call to undefined function/);
   assert.match(entries[0].raw, /Stack trace:/);
   assert.match(entries[0].raw, /#2 \{main\}/);
+  // Find location in continuation lines when header lacks "on line"
+  assert.equal(entries[0].file, '/Users/x/repos/my-plugin/inc/thing.php');
+  assert.equal(entries[0].line, 42);
 });
 
 test('preserves timestamps verbatim', () => {
   const entries = parseDebugLog(fixture('debug-basic.log'));
   assert.equal(entries[0].timestamp, '29-Aug-2026 12:41:13 UTC');
+});
+
+test('continuation lines with brackets do not start new entries', () => {
+  const input = `[29-Aug-2026 12:41:13 UTC] PHP Warning:  Test warning in /Users/x/site/test.php on line 10
+[INFO] continuing operation`;
+  const entries = parseDebugLog(input);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].level, 'Warning');
+  assert.equal(entries[0].message, 'Test warning');
+  assert.match(entries[0].raw, /\[INFO\] continuing operation/);
 });
