@@ -32,16 +32,25 @@ add_action( 'admin_menu', function () {
     );
 }, 9999 );
 
-add_action( 'plugins_loaded', function () {
+add_action( 'init', function () {
     if ( empty( $_GET['wp_compat_token'] ) ) { return; }
     if ( ! hash_equals( WP_COMPAT_TOKEN, (string) $_GET['wp_compat_token'] ) ) { return; }
     if ( is_user_logged_in() ) { return; }
+
     $user = get_user_by( 'login', 'admin' );
-    if ( $user ) {
-        wp_set_current_user( $user->ID );
-        wp_set_auth_cookie( $user->ID );
-    }
-} );
+    if ( ! $user ) { return; }
+
+    $expiration = time() + HOUR_IN_SECONDS;
+    $secure     = is_ssl();
+    $auth_name  = $secure ? SECURE_AUTH_COOKIE : AUTH_COOKIE;
+    $auth_sch   = $secure ? 'secure_auth' : 'auth';
+
+    // auth_redirect() reads $_COOKIE on THIS request, so populate it directly.
+    $_COOKIE[ $auth_name ]       = wp_generate_auth_cookie( $user->ID, $expiration, $auth_sch );
+    $_COOKIE[ LOGGED_IN_COOKIE ] = wp_generate_auth_cookie( $user->ID, $expiration, 'logged_in' );
+
+    wp_set_current_user( $user->ID );
+}, 1 );
 `;
 
   await writeFile(join(dir, 'wp-compat-harness.php'), php, 'utf8');
