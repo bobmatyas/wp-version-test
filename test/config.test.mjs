@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConfig } from '../src/config.mjs';
+import { parseConfig, loadConfig } from '../src/config.mjs';
+import { writeFile, unlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('applies defaults for optional fields', () => {
   const cfg = parseConfig({ owner: 'bobmatyas', plugins: [{ slug: 'wp-job-manager' }] });
@@ -57,4 +60,48 @@ test('rejects an unsafe slug', () => {
 test('rejects a non-object config', () => {
   assert.throws(() => parseConfig([]), /must be a JSON object/);
   assert.throws(() => parseConfig(null), /must be a JSON object/);
+});
+
+test('loadConfig happy path - reads and parses JSON file', async () => {
+  const testFile = join(tmpdir(), `test-config-${Date.now()}.json`);
+  const configData = {
+    owner: 'testuser',
+    phpVersion: '8.2',
+    plugins: [{ slug: 'test-plugin' }],
+  };
+
+  try {
+    await writeFile(testFile, JSON.stringify(configData));
+    const cfg = await loadConfig(testFile);
+
+    assert.equal(cfg.owner, 'testuser');
+    assert.equal(cfg.phpVersion, '8.2');
+    assert.equal(cfg.plugins[0].slug, 'test-plugin');
+  } finally {
+    await unlink(testFile);
+  }
+});
+
+test('loadConfig rejects missing file', async () => {
+  const nonExistentFile = join(tmpdir(), `no-such-file-${Date.now()}.json`);
+
+  await assert.rejects(
+    () => loadConfig(nonExistentFile),
+    /Config file not found/,
+  );
+});
+
+test('loadConfig rejects malformed JSON', async () => {
+  const testFile = join(tmpdir(), `bad-json-${Date.now()}.json`);
+
+  try {
+    await writeFile(testFile, '{ invalid json');
+
+    await assert.rejects(
+      () => loadConfig(testFile),
+      /not valid JSON/,
+    );
+  } finally {
+    await unlink(testFile);
+  }
 });
