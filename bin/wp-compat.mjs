@@ -8,7 +8,7 @@ import { loadConfig } from '../src/config.mjs';
 import { parseDebugLog } from '../src/logparse.mjs';
 import { diffEntries, classifyEntries, activationFinding, smokeFinding } from '../src/classify.mjs';
 import { parseCtrf, errorsOnly, diffAgainstBaseline, buildBaseline } from '../src/plugincheck.mjs';
-import { buildSmokeUrls, runSmoke } from '../src/smoke.mjs';
+import { buildSmokeUrls, runSmoke, checkUrl } from '../src/smoke.mjs';
 import { renderMarkdown } from '../src/report.mjs';
 import {
   assertStudioAvailable, availableWpVersions, createSite, enableDebugLog, wp, deleteSite,
@@ -125,6 +125,10 @@ async function main() {
       if (activation.code !== 0) {
         result.blocking.push(activationFinding(plugin.slug, activation.stderr || activation.stdout));
       } else {
+        // Prime the admin with one authenticated request so the harness's admin_menu
+        // hook fires and rewrites the menu file before we read it. The result is
+        // discarded — the real smoke pass below is what gets recorded.
+        await checkUrl(buildSmokeUrls(url, { token })[1]);
         const menuSlugs = (await readMenuSlugs(SITE)).filter((s) => !baselineMenu.includes(s));
         result.smoke = await runSmoke(buildSmokeUrls(url, {
           menuSlugs, adminPaths: plugin.adminPaths, token,
