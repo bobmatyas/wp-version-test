@@ -53,6 +53,27 @@ writing `.work/report.json` and `.work/report.md`.
 If it exits non-zero, stop and report the error. Do not proceed to GitHub
 writes.
 
+### If asked to baseline, never run a bare `baseline`
+
+This skill runs `run`. The other command, `baseline`, records a plugin's
+current Plugin Check findings as the accepted noise floor — and re-measuring a
+slug **replaces** its entry.
+
+So a bare `node bin/wp-compat.mjs baseline` re-measures every configured
+plugin and silently absorbs anything they have accumulated since, including
+real problems nobody has looked at. Those findings are then suppressed for
+good, and `run` will never mention them again.
+
+When the user asks to baseline newly-added plugins, scope it to exactly those:
+
+```bash
+node bin/wp-compat.mjs baseline --only new-plugin-a,new-plugin-b
+```
+
+Only re-baseline a plugin that already has an entry if the user has seen its
+current findings and said they are acceptable. If that is not clear, ask —
+absorbing a finding is not something they can notice later.
+
 ## Step 2: Read the report
 
 Read `.work/report.json`. The top level holds `wpVersion` — the concrete

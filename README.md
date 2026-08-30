@@ -40,6 +40,32 @@ portable across machines and checkout locations.
 configured plugin produces no Plugin Check output — a failed clone, say — it
 says so loudly rather than dropping the slug.
 
+### Adding plugins later: baseline only the new ones
+
+That merge behaviour has a sharp edge. Re-measuring a slug **replaces** its
+entry, so a bare `baseline` re-measures every configured plugin and silently
+absorbs whatever they have accumulated since — including genuinely new problems
+you have never seen. They become part of the noise floor, and `run` will never
+mention them again.
+
+So when you add plugins to `plugins.json`, baseline only the new ones:
+
+```bash
+node bin/wp-compat.mjs baseline --only new-plugin-a,new-plugin-b
+node bin/wp-compat.mjs run
+```
+
+The plugins already in the file keep the baselines they had, and `run` keeps
+reporting anything new in them.
+
+Re-baseline an existing plugin only when you have looked at its current
+findings and decided they are acceptable. The baseline records what was
+*already* there; it is not a way to keep quietening things.
+
+`run` needs no such care — it re-tests every configured plugin from a fresh
+clone on a fresh site every time, and one plugin's result never affects
+another's.
+
 The baseline step matters. Plugin Check reports pre-existing code-quality
 issues that have nothing to do with WordPress version compatibility. Skip the
 baseline and your first `run` dumps every one of those as if it were new — a
