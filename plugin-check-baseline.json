@@ -1,5 +1,25 @@
 {
   "additional-css-shortcut": [
     "additional-css-shortcut::outdated_tested_upto_header::readme.txt"
+  ],
+  "block-ai-crawlers": [
+    "block-ai-crawlers::PluginCheck.CodeAnalysis.Offloading.OffloadedContent::bin/import-robots.php",
+    "block-ai-crawlers::PluginCheck.CodeAnalysis.Offloading.OffloadedContent::inc/generated/crawlers.php",
+    "block-ai-crawlers::PluginCheck.CodeAnalysis.WriteFile.PluginDirectoryWrite::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.Security.EscapeOutput.OutputNotEscaped::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.curl_curl_close::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.curl_curl_error::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.curl_curl_exec::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.curl_curl_getinfo::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.curl_curl_init::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.curl_curl_setopt_array::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.file_system_operations_fwrite::bin/import-robots.php",
+    "block-ai-crawlers::WordPress.WP.AlternativeFunctions.file_system_operations_mkdir::bin/import-robots.php",
+    "block-ai-crawlers::missing_direct_file_access_protection::bin/import-robots.php",
+    "block-ai-crawlers::outdated_tested_upto_header::readme.txt"
+  ],
+  "pretty-rss": [
+    "pretty-rss::WordPress.Security.EscapeOutput.ExceptionNotEscaped::inc/lib/ArrayToXml.php",
+    "pretty-rss::outdated_tested_upto_header::readme.txt"
   ]
 }
