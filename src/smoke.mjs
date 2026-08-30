@@ -49,12 +49,58 @@ export function buildSmokeUrls(baseUrl, { menuSlugs = [], adminPaths = [], token
   return [`${base}/`, ...withToken];
 }
 
-export async function checkUrl(url, { fetchImpl = fetch, timeoutMs = 10000 } = {}) {
+// A per-run cookie jar. `fetch` has no cookie store of its own: with
+// `redirect: 'follow'` only the *final* response's headers are visible, so a
+// Set-Cookie on an intermediate 302 is lost. The jar must therefore be seeded
+// by a request that does not redirect (see bin/wp-compat.mjs's baseline pass)
+// before it has anything useful to hand back.
+//
+// State lives on the returned object, not in module scope, so a jar is always
+// created per run and threaded through explicitly — never shared global
+// mutable state.
+export function createCookieJar() {
+  const cookies = new Map();
+
+  return {
+    header() {
+      if (cookies.size === 0) return null;
+      return [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
+    },
+    absorb(res) {
+      const headers = res && res.headers;
+      if (!headers) return;
+
+      const setCookies = typeof headers.getSetCookie === 'function'
+        ? headers.getSetCookie()
+        : (typeof headers.get === 'function' && headers.get('set-cookie'))
+          ? [headers.get('set-cookie')]
+          : [];
+
+      for (const setCookie of setCookies || []) {
+        const pair = setCookie.split(';', 1)[0];
+        const eq = pair.indexOf('=');
+        if (eq === -1) continue;
+        const name = pair.slice(0, eq).trim();
+        const value = pair.slice(eq + 1).trim();
+        if (name) cookies.set(name, value);
+      }
+    },
+  };
+}
+
+export async function checkUrl(url, { fetchImpl = fetch, timeoutMs = 10000, jar } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetchImpl(url, { signal: controller.signal, redirect: 'follow' });
+    const fetchOpts = { signal: controller.signal, redirect: 'follow' };
+    if (jar) {
+      const cookieHeader = jar.header();
+      if (cookieHeader) fetchOpts.headers = { Cookie: cookieHeader };
+    }
+
+    const res = await fetchImpl(url, fetchOpts);
+    if (jar) jar.absorb(res);
 
     // Detect redirect away from /wp-admin/ when requested to stay in /wp-admin/
     if (isAdminUrl(url) && res.redirected && res.url) {

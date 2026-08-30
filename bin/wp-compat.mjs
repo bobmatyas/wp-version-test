@@ -10,7 +10,9 @@ import { diffEntries, classifyEntries, activationFinding, smokeFinding } from '.
 import {
   parseCtrf, errorsOnly, relativizeFindings, diffAgainstBaseline, buildBaseline,
 } from '../src/plugincheck.mjs';
-import { buildSmokeUrls, runSmoke, checkUrl } from '../src/smoke.mjs';
+import {
+  buildSmokeUrls, runSmoke, checkUrl, createCookieJar,
+} from '../src/smoke.mjs';
 import { renderMarkdown } from '../src/report.mjs';
 import {
   assertStudioAvailable, availableWpVersions, createSite, enableDebugLog, wp, deleteSite,
@@ -107,6 +109,12 @@ async function main() {
 
   const token = randomBytes(16).toString('hex');
   const startedAt = new Date().toISOString();
+  // One jar per run, seeded during the baseline pass below (cookies are
+  // per-user, not per-plugin) and threaded through every smoke check —
+  // including the per-plugin priming request — so a plugin whose admin page
+  // redirects (e.g. to build its own admin.php?page=... or site-editor.php
+  // URL, without the harness token) still lands on an authenticated request.
+  const jar = createCookieJar();
 
   // Provisioning is inside the guarded region on purpose: `studio create
   // --start` registers the site before it starts it, and starting is exactly
@@ -152,7 +160,12 @@ async function main() {
     // not loaded) and every plugin would fail identically — producing a report
     // full of real-looking findings the skill would turn into bogus issues on
     // public repos. Stop here instead.
-    const baselineSmoke = await runSmoke(buildSmokeUrls(url, { token }));
+    // The `/wp-admin/` check here is also what seeds the jar: it's a
+    // non-redirecting 200 (the harness already authenticated it via
+    // $_COOKIE), so its Set-Cookie headers are the first thing fetch actually
+    // exposes. `redirect: 'follow'` hides Set-Cookie on any intermediate hop,
+    // so a request that redirects could never seed it.
+    const baselineSmoke = await runSmoke(buildSmokeUrls(url, { token }), { jar });
     const baselineSmokeFailures = baselineSmoke.filter((s) => !s.ok);
     if (baselineSmokeFailures.length) {
       const detail = baselineSmokeFailures.map((s) => `  ${s.url} — ${s.reason}`).join('\n');
@@ -199,11 +212,11 @@ async function main() {
           // Prime the admin with one authenticated request so the harness's admin_menu
           // hook fires and rewrites the menu file before we read it. The result is
           // discarded — the real smoke pass below is what gets recorded.
-          await checkUrl(buildSmokeUrls(url, { token })[1]);
+          await checkUrl(buildSmokeUrls(url, { token })[1], { jar });
           const menuSlugs = (await readMenuSlugs(SITE)).filter((s) => !baselineMenu.includes(s));
           result.smoke = await runSmoke(buildSmokeUrls(url, {
             menuSlugs, adminPaths: plugin.adminPaths, token,
-          }));
+          }), { jar });
           for (const failure of result.smoke.filter((s) => !s.ok)) {
             result.blocking.push(smokeFinding(plugin.slug, failure));
           }

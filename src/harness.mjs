@@ -50,6 +50,14 @@ add_action( 'init', function () {
     $_COOKIE[ LOGGED_IN_COOKIE ] = wp_generate_auth_cookie( $user->ID, $expiration, 'logged_in' );
 
     wp_set_current_user( $user->ID );
+
+    // $_COOKIE only authenticates THIS request. Plugins that redirect (e.g. to
+    // build their own admin.php?page=... or site-editor.php URL) send the
+    // client to a follow-up request that carries none of our injected values —
+    // WordPress then bounces it to wp-login.php and the harness token looks
+    // like it never authenticated. Sending real Set-Cookie headers here means
+    // the client actually holds cookies for that next request.
+    wp_set_auth_cookie( $user->ID, false, $secure );
 }, 1 );
 `;
 

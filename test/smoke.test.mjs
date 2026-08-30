@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  hasFatalSignature, menuSlugToPath, buildSmokeUrls, checkUrl, runSmoke,
+  hasFatalSignature, menuSlugToPath, buildSmokeUrls, checkUrl, runSmoke, createCookieJar,
 } from '../src/smoke.mjs';
 
 const okResponse = (body = '<html>fine</html>') => ({
@@ -279,4 +279,152 @@ test('does not mistake a local slug that merely contains "http" for a URL', () =
     token: 'abc123',
   });
   assert.ok(urls.some((u) => u.includes('page=my-http-settings')));
+});
+
+// --- cookie jar -------------------------------------------------------
+
+test('a fresh cookie jar renders no Cookie header', () => {
+  const jar = createCookieJar();
+  assert.equal(jar.header(), null);
+});
+
+test('jar absorbs multiple Set-Cookie values via headers.getSetCookie()', () => {
+  const jar = createCookieJar();
+  jar.absorb({
+    headers: {
+      getSetCookie: () => [
+        'wordpress_logged_in_abc=alice%7C123; path=/; HttpOnly',
+        'wordpress_sec_abc=deadbeef; path=/wp-admin; secure; HttpOnly',
+      ],
+    },
+  });
+  const header = jar.header();
+  assert.match(header, /wordpress_logged_in_abc=alice%7C123/);
+  assert.match(header, /wordpress_sec_abc=deadbeef/);
+  // Only name=value pairs, joined for a request header — no attributes.
+  assert.ok(!header.includes('HttpOnly'));
+  assert.ok(!header.includes('path='));
+});
+
+test('jar falls back to headers.get("set-cookie") when getSetCookie is unavailable', () => {
+  const jar = createCookieJar();
+  jar.absorb({
+    headers: {
+      get: (name) => (name === 'set-cookie' ? 'session=xyz; path=/' : null),
+    },
+  });
+  assert.equal(jar.header(), 'session=xyz');
+});
+
+test('jar absorb tolerates a response with no headers at all', () => {
+  const jar = createCookieJar();
+  assert.doesNotThrow(() => jar.absorb({}));
+  assert.doesNotThrow(() => jar.absorb(undefined));
+  assert.equal(jar.header(), null);
+});
+
+test('jar updates a cookie value on a later absorb (re-authentication)', () => {
+  const jar = createCookieJar();
+  jar.absorb({ headers: { getSetCookie: () => ['token=first'] } });
+  jar.absorb({ headers: { getSetCookie: () => ['token=second'] } });
+  assert.equal(jar.header(), 'token=second');
+});
+
+// --- checkUrl + jar integration ----------------------------------------
+
+test('checkUrl with no jar sends no Cookie header (byte-identical to before)', async () => {
+  let seenOpts;
+  await checkUrl('http://x/', {
+    fetchImpl: async (url, opts) => { seenOpts = opts; return okResponse(); },
+  });
+  assert.deepEqual(Object.keys(seenOpts).sort(), ['redirect', 'signal']);
+});
+
+test('checkUrl with a jar but no cookies yet still sends no Cookie header', async () => {
+  const jar = createCookieJar();
+  let seenOpts;
+  await checkUrl('http://x/', {
+    jar,
+    fetchImpl: async (url, opts) => { seenOpts = opts; return okResponse(); },
+  });
+  assert.deepEqual(Object.keys(seenOpts).sort(), ['redirect', 'signal']);
+});
+
+test('checkUrl sends the jar\'s Cookie header once the jar holds cookies', async () => {
+  const jar = createCookieJar();
+  jar.absorb({ headers: { getSetCookie: () => ['wordpress_logged_in=alice'] } });
+
+  let seenOpts;
+  await checkUrl('http://x/wp-admin/', {
+    jar,
+    fetchImpl: async (url, opts) => { seenOpts = opts; return okResponse(); },
+  });
+  assert.equal(seenOpts.headers.Cookie, 'wordpress_logged_in=alice');
+});
+
+test('checkUrl absorbs Set-Cookie from a non-redirecting response into the jar', async () => {
+  const jar = createCookieJar();
+  await checkUrl('http://x/wp-admin/', {
+    jar,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { getSetCookie: () => ['wordpress_logged_in=alice; path=/'] },
+      text: async () => '<html>dashboard</html>',
+    }),
+  });
+  assert.equal(jar.header(), 'wordpress_logged_in=alice');
+});
+
+test('checkUrl tolerates a fetchImpl whose response has no headers, even with a jar', async () => {
+  const jar = createCookieJar();
+  const r = await checkUrl('http://x/', {
+    jar,
+    fetchImpl: async () => okResponse(), // no `headers` property at all
+  });
+  assert.equal(r.ok, true);
+  assert.equal(jar.header(), null);
+});
+
+test('a plugin admin redirect that drops the token still passes once the jar holds cookies', async () => {
+  // This is the additional-css-shortcut scenario: the plugin's own admin page
+  // redirects to a URL it built itself (no wp_compat_token), but the jar
+  // carries real WordPress auth cookies from an earlier, non-redirecting
+  // request, so the follow-up lands inside /wp-admin/ authenticated instead
+  // of bouncing to wp-login.php.
+  const jar = createCookieJar();
+  jar.absorb({ headers: { getSetCookie: () => ['wordpress_logged_in=alice'] } });
+
+  const r = await checkUrl('http://x/wp-admin/admin.php?page=additional-css-shortcut&wp_compat_token=t', {
+    jar,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      redirected: true,
+      url: 'http://x/wp-admin/site-editor.php?p=%2Fstyles&section=%2Fcss',
+      headers: { getSetCookie: () => [] },
+      text: async () => '<html>site editor</html>',
+    }),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.reason, null);
+});
+
+test('runSmoke threads the jar through to every checkUrl call', async () => {
+  const jar = createCookieJar();
+  const calls = [];
+  await runSmoke(['http://x/a', 'http://x/b'], {
+    jar,
+    fetchImpl: async (url, opts) => {
+      calls.push(opts.headers?.Cookie ?? null);
+      return {
+        ok: true,
+        status: 200,
+        headers: { getSetCookie: () => (calls.length === 1 ? ['s=1'] : []) },
+        text: async () => '<html>ok</html>',
+      };
+    },
+  });
+  // First call had nothing to send yet; the second carries what the first absorbed.
+  assert.deepEqual(calls, [null, 's=1']);
 });
