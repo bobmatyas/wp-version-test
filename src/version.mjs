@@ -7,22 +7,22 @@ export function bumpPatch(version) {
 }
 
 export function readPluginHeaderVersion(text) {
-  const m = /^[ \t]*\*?[ \t]*Version:[ \t]*(.+?)[ \t]*$/m.exec(text);
+  const m = /^[ \t]*\*?[ \t]*Version:[ \t]*(.+?)[ \t]*$/mi.exec(text);
   return m ? m[1] : null;
 }
 
 export function updatePluginHeaderVersion(text, newVersion) {
-  return replaceLine(text, /^([ \t]*\*?[ \t]*Version:[ \t]*)(.+?)([ \t]*)$/m, newVersion,
+  return replaceLine(text, /^([ \t]*\*?[ \t]*Version:[ \t]*)(.+?)([ \t]*)$/mi, newVersion,
     'No "Version:" header found.');
 }
 
 export function updateReadmeTestedUpTo(text, wpVersion) {
-  return replaceInHeader(text, /^(Tested up to:[ \t]*)(.+?)([ \t]*)$/m, wpVersion,
+  return replaceInHeader(text, /^(Tested up to:[ \t]*)(.+?)([ \t]*)$/mi, wpVersion,
     'No "Tested up to:" line found.');
 }
 
 export function updateReadmeStableTag(text, newVersion) {
-  return replaceInHeader(text, /^(Stable tag:[ \t]*)(.+?)([ \t]*)$/m, newVersion,
+  return replaceInHeader(text, /^(Stable tag:[ \t]*)(.+?)([ \t]*)$/mi, newVersion,
     'No "Stable tag:" line found.');
 }
 

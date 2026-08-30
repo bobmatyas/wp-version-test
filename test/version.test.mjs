@@ -196,3 +196,65 @@ test('rejects insertMarkdownChangelog when no ## heading exists', () => {
   assert.equal(r.text, md);
   assert.match(r.reason, /##/);
 });
+
+test('updates Stable Tag (capital T) and preserves the header\'s own casing', () => {
+  const readmeCapitalT = `=== My Plugin ===
+Tested up to: 6.8
+Stable Tag: 3.1.4
+
+== Description ==
+Does things.
+`;
+  const r = updateReadmeStableTag(readmeCapitalT, '3.1.5');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /^Stable Tag: 3\.1\.5$/m);
+  assert.doesNotMatch(r.text, /^Stable tag: 3\.1\.5$/m);
+});
+
+test('updates Tested Up To in mixed case and preserves the header\'s own casing', () => {
+  const readmeMixedCase = `=== My Plugin ===
+Tested Up To: 6.8
+Stable tag: 3.1.4
+
+== Description ==
+Does things.
+`;
+  const r = updateReadmeTestedUpTo(readmeMixedCase, '7.1');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /^Tested Up To: 7\.1$/m);
+  assert.doesNotMatch(r.text, /^Tested up to: 7\.1$/m);
+});
+
+test('reads and updates a lowercase "version:" plugin header, preserving its casing', () => {
+  const pluginLowercaseVersion = `<?php
+/**
+ * Plugin Name: My Plugin
+ * version: 3.1.4
+ * License: GPLv2 or later
+ */
+`;
+  assert.equal(readPluginHeaderVersion(pluginLowercaseVersion), '3.1.4');
+
+  const r = updatePluginHeaderVersion(pluginLowercaseVersion, '3.1.5');
+  assert.equal(r.changed, true);
+  assert.match(r.text, /^ \* version: 3\.1\.5$/m);
+  assert.doesNotMatch(r.text, /^ \* Version: 3\.1\.5$/m);
+});
+
+test('case-insensitive Stable Tag matching still respects header-block scoping', () => {
+  const readmeStableTagOnlyInChangelog = `=== My Plugin ===
+Tested up to: 6.8
+
+== Description ==
+Does things.
+
+== Changelog ==
+
+= 3.1.4 =
+Stable Tag: 3.1.3 mentioned in changelog prose, not a real header.
+`;
+  const r = updateReadmeStableTag(readmeStableTagOnlyInChangelog, '3.1.5');
+  assert.equal(r.changed, false);
+  assert.equal(r.text, readmeStableTagOnlyInChangelog);
+  assert.match(r.reason, /Stable tag/);
+});
