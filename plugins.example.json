@@ -1,12 +1,14 @@
 {
-  "owner": "bobmatyas",
+  "owner": "your-github-username",
   "phpVersion": "8.4",
   "plugins": [
     {
-      "slug": "wp-job-manager",
-      "repo": "wp-job-manager",
-      "ignoreCodes": [],
-      "adminPaths": []
+      "slug": "my-plugin",
+      "repo": "my-plugin"
+    },
+    {
+      "slug": "pretty-rss",
+      "repo": "wp-pretty-rss"
     }
   ]
 }

@@ -104,6 +104,31 @@ defaults to the repo's default branch.
 - `ignoreCodes` — Plugin Check codes to silence permanently for this plugin
 - `adminPaths` — extra admin URLs to smoke-test, beyond the auto-discovered ones
 
+### `slug` must be the plugin's own slug, not a friendly name
+
+`slug` is the directory the plugin is installed into, so it is also the name
+WP-CLI activates it by and the name Plugin Check validates the plugin against.
+It must match the plugin's real slug — the `Text Domain` in its main file
+header, which for a wordpress.org plugin is its `.org` slug.
+
+It is **not** the repository name, and repositories are often named
+differently. Take the slug from the plugin, not the repo:
+
+```bash
+grep -i "Text Domain" path/to/plugin/*.php
+```
+
+```json
+{ "slug": "pretty-rss", "repo": "wp-pretty-rss" }
+```
+
+Getting this wrong does not fail loudly — it produces a pile of plausible but
+bogus findings. A plugin whose text domain is `pretty-rss`, configured as
+`pretty-rss-feeds`, reported **22 spurious `TextDomainMismatch` errors**
+("Expected 'pretty-rss-feeds' but got 'pretty-rss'") on every translation call
+in the plugin. Correcting the slug took it from 24 findings to 2. Across
+several plugins, that noise will bury the real findings.
+
 ## How it works
 
 1. Provisions a Studio site on the target WordPress version, with
