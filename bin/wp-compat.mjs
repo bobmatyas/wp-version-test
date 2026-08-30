@@ -113,6 +113,10 @@ async function main() {
   // what fails on a port conflict. A throw out here would skip teardown and
   // orphan the registration.
   let url = null;
+  // Hoisted out of the try so the `--keep-site` teardown below can see which
+  // plugins were actually testable, even if the pipeline threw partway
+  // through the plugin loop.
+  let results = [];
   try {
     console.log(`Provisioning WordPress ${requestedWpVersion} on PHP ${config.phpVersion}…`);
     ({ url } = await createSite({
@@ -166,7 +170,6 @@ async function main() {
     const baselineMenu = await readMenuSlugs(SITE);
 
     const storedBaseline = command === 'run' ? await readBaseline() : {};
-    const results = [];
     const pcpPerPlugin = {};
 
     for (const plugin of plugins) {
@@ -301,6 +304,14 @@ async function main() {
       // Nothing reached disk; there is nothing registered to deregister.
     } else if (flags.keepSite) {
       console.log(`Site kept at ${SITE}${url ? ` (${url})` : ''}`);
+      // Best-effort only: this runs inside the `finally` that also runs after
+      // a failure, so nothing here may throw. A problem re-linking must never
+      // mask a real error already propagating, or turn a clean run into a
+      // failed one.
+      if (url) {
+        await relinkForBrowsing({ site: SITE, repos: REPOS, url, token, results })
+          .catch((e) => console.warn(`Could not re-link tested plugins for browsing: ${e.message}`));
+      }
     } else {
       try {
         await deleteSite(SITE);
@@ -309,6 +320,43 @@ async function main() {
       }
     }
   }
+}
+
+// `--keep-site` teardown only. Re-links and activates every plugin that was
+// actually testable — a symlink whose clone directory still exists and which
+// never hit a runError — so the kept site is browsable instead of empty.
+// Each plugin is attempted independently: one bad symlink or a WP-CLI
+// activation failure must not stop the rest from going up.
+async function relinkForBrowsing({ site, repos, url, token, results }) {
+  const activated = [];
+  for (const result of results) {
+    if (result.runError !== null) continue; // nothing testable was left behind for it
+    const dest = join(repos, result.slug);
+    if (!(await pathExists(dest))) continue;
+    const link = join(site, 'wp-content', 'plugins', result.slug);
+    try {
+      await symlink(dest, link);
+      const activation = await wp(site, ['plugin', 'activate', result.slug]);
+      if (activation.code !== 0) {
+        console.warn(`  Could not activate ${result.slug} for browsing: ${activation.stderr || activation.stdout}`);
+        continue;
+      }
+      activated.push(result.slug);
+    } catch (e) {
+      console.warn(`  Could not link ${result.slug} for browsing: ${e.message}`);
+    }
+  }
+
+  if (!activated.length) return;
+
+  console.log('');
+  console.log(`Site: ${url}`);
+  console.log(`Admin (auto-login): ${url}/wp-admin/?wp_compat_token=${token}`);
+  console.log(`Activated for browsing: ${activated.join(', ')}`);
+  console.log(
+    'Note: these were tested one at a time, but are now active together — ' +
+    'this is not the exact configuration that produced the report.',
+  );
 }
 
 async function readSafe(path) {

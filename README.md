@@ -53,7 +53,7 @@ node bin/wp-compat.mjs run                    # latest stable
 node bin/wp-compat.mjs run --wp nightly       # upcoming release
 node bin/wp-compat.mjs run --wp 6.9           # a specific version
 node bin/wp-compat.mjs run --only my-plugin   # one plugin
-node bin/wp-compat.mjs run --keep-site        # leave the Studio site up to inspect
+node bin/wp-compat.mjs run --keep-site        # leave the Studio site up, browsable
 ```
 
 Available WordPress versions: `nightly`, `7.1`, `7.0`, `6.9`, `6.8`, `6.7`,
@@ -64,6 +64,12 @@ how you test against the upcoming release before it's tagged.
 CLI asks the provisioned site what it actually installed and records *that*, so
 `report.json`'s `wpVersion` is always a concrete version — which is what ends
 up in a plugin's `Tested up to:` header.
+
+`--keep-site` skips teardown and, as its last act, re-activates every plugin
+that was actually testable, printing the site URL and an auto-login admin
+link. Plugins are tested one at a time for clean error attribution, so the
+kept site is not the exact configuration that produced the report — it's all
+of them active together, for browsing only.
 
 Results land in `.work/report.json` (machine-readable, consumed by the skill)
 and `.work/report.md` (a readable summary, also printed to the console).

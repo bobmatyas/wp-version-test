@@ -33,6 +33,12 @@ version from `report.json`'s `wpVersion` — never from what you passed on the
 command line.** Writing `latest` into a `Tested up to:` header would produce an
 invalid wordpress.org header in a public repo.
 
+`--keep-site` leaves the Studio site up instead of tearing it down, and
+re-activates every testable plugin as its final act so the site is browsable.
+Plugins are tested one at a time for clean error attribution, so the kept
+site — all of them active together — is not the exact configuration that
+produced the report.
+
 Available versions are `nightly`, `7.1`, `7.0`,
 `6.9`, `6.8`, `6.7`, `6.6`, `6.5`, `6.4`, `6.3`, `6.2` (Studio has no
 `-beta`/`-RC` identifiers — `nightly` is how you test the upcoming release).
