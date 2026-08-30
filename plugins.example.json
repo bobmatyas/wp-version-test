@@ -1,0 +1,14 @@
+{
+  "owner": "your-github-username",
+  "phpVersion": "8.4",
+  "plugins": [
+    {
+      "slug": "my-plugin",
+      "repo": "my-plugin"
+    },
+    {
+      "slug": "pretty-rss",
+      "repo": "wp-pretty-rss"
+    }
+  ]
+}

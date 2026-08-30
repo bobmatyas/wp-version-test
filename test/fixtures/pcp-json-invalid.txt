@@ -1,0 +1,5 @@
+FILE: /path/to/pcp-dummy.php
+[{"line":8,"column":5,"type":"WARNING","code":"WordPress.PHP.DevelopmentFunctions.error_log_error_log","message":"error_log() found.","docs":""}]
+
+FILE: readme.txt
+[{"line":0,"column":0,"type":"ERROR","code":"no_plugin_readme","message":"The plugin readme.txt does not exist.","docs":""}]

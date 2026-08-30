@@ -14,7 +14,7 @@
 
 - **Zero runtime dependencies.** No package installed from npm. Node 22 built-ins only. `package.json` exists solely to hold a `test` script.
 - **All source files are `.mjs`** using ESM `import`/`export`.
-- **Tests run with `node --test test/`** and use only `node:test` and `node:assert/strict`.
+- **Tests run with `node --test "test/**/*.test.mjs"`** (the bare `node --test test/` form fails: Node resolves `test/` as a module, not a directory) and use only `node:test` and `node:assert/strict`.
 - **`--file-access all-files` is mandatory** on `studio create`; symlinked plugins do not load without it.
 - **Plugin Check must be invoked with `--format=ctrf`.** `--format=json` emits `FILE:` header lines interleaved with JSON arrays and is not parseable.
 - **Plugins are tested one at a time**, activated and deactivated in sequence. This is required for error attribution.
@@ -74,7 +74,7 @@ The five modules carrying real logic (`logparse`, `classify`, `plugincheck`, `ve
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test \"test/**/*.test.mjs\""
   }
 }
 ```
@@ -1355,11 +1355,13 @@ export async function assertStudioAvailable() {
 export async function availableWpVersions() {
   // studio create validates the version before touching the path, and reports
   // the valid list on failure. The path must still be creatable, so use a temp
-  // dir rather than an invalid path.
+  // dir rather than an invalid path. The probe version must be WELL-FORMED but
+  // nonexistent: yargs rejects malformed values (e.g. "0.0.0-invalid", "0.0.0")
+  // before Studio ever runs its availability check, and nothing is printed.
   const probePath = join(tmpdir(), `wp-compat-version-probe-${process.pid}`);
   const { stdout, stderr } = await run(
     'studio',
-    ['create', '--path', probePath, '--wp', '0.0.0-invalid', '--start=false'],
+    ['create', '--path', probePath, '--wp', '999.999.999', '--start=false'],
     { timeoutMs: 120000 },
   );
   await rm(probePath, { recursive: true, force: true });
@@ -1961,7 +1963,7 @@ main().catch((e) => {
   "type": "module",
   "bin": { "wp-compat": "./bin/wp-compat.mjs" },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test \"test/**/*.test.mjs\""
   }
 }
 ```

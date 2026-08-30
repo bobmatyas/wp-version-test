@@ -1,0 +1,53 @@
+{
+  "reportFormat": "CTRF",
+  "specVersion": "1.0.0",
+  "generatedBy": "plugin-check",
+  "results": {
+    "tool": { "name": "plugin-check" },
+    "summary": { "tests": 3, "passed": 0, "failed": 3 },
+    "tests": [
+      {
+        "name": "plugin_header_no_license (pcp-dummy.php:0:0)",
+        "status": "failed",
+        "message": "Missing \"License\" in Plugin Header.",
+        "line": 0,
+        "rawStatus": "ERROR",
+        "filePath": "pcp-dummy.php",
+        "extra": {
+          "code": "plugin_header_no_license",
+          "findingType": "ERROR",
+          "severity": 9,
+          "docs": "https://developer.wordpress.org/plugins/wordpress-org/common-issues/"
+        }
+      },
+      {
+        "name": "error_log (pcp-dummy.php:8:5)",
+        "status": "failed",
+        "message": "error_log() found. Debug code should not normally be used in production.",
+        "line": 8,
+        "rawStatus": "WARNING",
+        "filePath": "pcp-dummy.php",
+        "extra": {
+          "code": "WordPress.PHP.DevelopmentFunctions.error_log_error_log",
+          "findingType": "WARNING",
+          "severity": 5,
+          "docs": ""
+        }
+      },
+      {
+        "name": "eval (pcp-dummy.php:10:5)",
+        "status": "failed",
+        "message": "The use of function eval() is forbidden",
+        "line": 10,
+        "rawStatus": "ERROR",
+        "filePath": "pcp-dummy.php",
+        "extra": {
+          "code": "Generic.PHP.ForbiddenFunctions.Found",
+          "findingType": "ERROR",
+          "severity": 9,
+          "docs": ""
+        }
+      }
+    ]
+  }
+}
